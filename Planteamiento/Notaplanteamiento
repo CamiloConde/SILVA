@@ -1,0 +1,15 @@
+## Nota sobre el planteamiento 
+
+
+falta por hacer las bases tecnicas del repositorio para llevarlo al MVP
+```
+SILVA/
+├── Planteamiento/        # (ya existe) documentos de las entregas 1 y 2, en PDF/Markdown
+├── src/                  # código fuente de la aplicación (cuando inicie la construcción)
+├── tests/                # pruebas funcionales y unitarias (sección 10.3 de la plantilla)
+├── data/ o modelos/       # dataset de landmarks y modelo entrenado (modelo_senas.pkl)
+├── docs/                 # capturas, evidencias de pruebas, diagramas exportados como imagen
+└── README.md             # instrucciones de instalación/ejecución (sección 10.5 de la plantilla)
+```
+
+Esto separa claramente el material de planteamiento/documentación (ya versionado) del código que se irá agregando a partir de ahora, y deja lista la estructura que pedirá la evidencia del tercer corte (repositorio con instrucciones de instalación, pruebas y despliegue). Quedo atento a si quieren que cree esta estructura de carpetas ya mismo o la dejamos para cuando arranque la construcción del código.
