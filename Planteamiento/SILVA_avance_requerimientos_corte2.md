@@ -133,7 +133,7 @@ Para la primera versión funcional del proyecto (MVP del tercer corte) se consid
 
 **Herramienta de gestión de proyecto:** el equipo no tenía una herramienta de gestión ágil configurada; se evaluó y se eligió **Trello**, por ser gratuita, suficiente para un equipo de 3 personas y directamente compatible con un tablero Kanban (columnas + tarjetas), sin necesitar la complejidad de Jira (pensado para equipos más grandes y con procesos más formales).
 
-**Tablero creado:** https://trello.com/b/6aab5498d646b25e3cf00ca3 (tablero "SILVA 🚀"). Estado actual: se crearon las 5 columnas de la estructura definida más abajo y se cargaron las historias de usuario de la sección 5 como tarjetas en `Backlog`, cada una etiquetada por prioridad MoSCoW con el color correspondiente (🔴 Obligatorio, 🟡 Importante, 🟢 Deseable), más una tarjeta fija de "Instrucciones" que documenta cómo usar el tablero. Falta repartir tarjetas entre los 3 integrantes y mover las primeras a `Por hacer` cuando arranque la construcción.
+**Tablero creado:** https://trello.com/b/6aab5498d646b25e3cf00ca3 (tablero "SILVA "). Estado actual: se crearon las 5 columnas de la estructura definida más abajo y se cargaron las historias de usuario de la sección 5 como tarjetas en `Backlog`, cada una etiquetada por prioridad MoSCoW con el color correspondiente (Obligatorio, Importante, Deseable), más una tarjeta fija de "Instrucciones" que documenta cómo usar el tablero. Falta repartir tarjetas entre los 3 integrantes y mover las primeras a `Por hacer` cuando arranque la construcción.
 
 ### 8.1 Qué se implementó y por qué (metodología ágil)
 
