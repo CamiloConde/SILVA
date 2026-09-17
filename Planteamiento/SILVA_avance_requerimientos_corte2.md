@@ -9,7 +9,7 @@
 **Documento base que se complementa:** [Silva-corte1.pdf](Silva-corte1.pdf) (secciones 1-8) y [SILVA_diagramas_UMLv2.pdf](SILVA_diagramas_UMLv2.pdf) (modelado UML previo)
 
 Este documento complementa el modelado inicial de SILVA presentado en la entrega anterior, mediante el proceso de ingeniería de requerimientos solicitado en la guía *Avance de proyecto de aula*. Se estructura siguiendo los ocho puntos de esa guía; las tablas de requerimientos y backlog quedan redactadas con la misma nomenclatura (RF-xx, RNF-xx) del punto 9 de la plantilla del proyecto de aula, para que puedan trasladarse directamente a esa sección cuando se consolide el documento completo del segundo corte.
-.
+..
 ---
 
 ## 1. Descripción del problema
