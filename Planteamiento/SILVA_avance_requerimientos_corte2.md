@@ -181,21 +181,3 @@ Hand Talk. (s.f.). *Meet the Hand Talk sign language translator app*. https://ww
 SignAll Technologies. (s.f.). *SignAll 1.0: real-time American Sign Language translation*. Citado en Gestión (2020). https://gestion.pe/fotogalerias/app-ayuda-personas-sordas-interprete-virtual-lenguaje-signos-236772-noticia/
 
 Instituto Nacional para Sordos [INSOR]. (2019). *Plan Estratégico Institucional 2019-2022* [citado en Linares Munar, 2023].
-
----
-
-## Nota sobre el planteamiento general de estructura del repositorio para la entrega del MVP
-
-Además de este avance, se propone (para discusión con el equipo, no aplicado aún) organizar el repositorio así de cara al tercer corte:
-
-```
-SILVA/
-├── Planteamiento/        # (ya existe) documentos de las entregas 1 y 2, en PDF/Markdown
-├── src/                  # código fuente de la aplicación (cuando inicie la construcción)
-├── tests/                # pruebas funcionales y unitarias (sección 10.3 de la plantilla)
-├── data/ o modelos/       # dataset de landmarks y modelo entrenado (modelo_senas.pkl)
-├── docs/                 # capturas, evidencias de pruebas, diagramas exportados como imagen
-└── README.md             # instrucciones de instalación/ejecución (sección 10.5 de la plantilla)
-```
-
-Esto separa claramente el material de planteamiento/documentación (ya versionado) del código que se irá agregando a partir de ahora, y deja lista la estructura que pedirá la evidencia del tercer corte (repositorio con instrucciones de instalación, pruebas y despliegue). Quedo atento a si quieren que cree esta estructura de carpetas ya mismo o la dejamos para cuando arranque la construcción del código.
