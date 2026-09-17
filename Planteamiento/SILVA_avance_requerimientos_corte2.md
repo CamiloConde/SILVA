@@ -150,11 +150,11 @@ Para la primera versión funcional del proyecto (MVP del tercer corte) se consid
 
 | Columna | Propósito | Límite WIP sugerido |
 |---|---|---|
-| Backlog | Historias y tareas priorizadas, no iniciadas | — |
-| Por hacer (próxima iteración) | Subconjunto del backlog seleccionado para trabajar pronto | 5 |
-| En progreso | Tareas que un integrante está desarrollando activamente | 3 |
-| En revisión | Tareas terminadas, pendientes de validación por otro integrante | 2 |
-| Hecho | Tareas completadas y verificadas | — |
+| Backlog | Historias y tareas priorizadas, no iniciadas. | — |
+| Por hacer (próxima iteración) | Subconjunto del backlog seleccionado para trabajar pronto. | 5 |
+| En progreso | Tareas que un integrante está desarrollando activamente. | 3 |
+| En revisión | Tareas terminadas, pendientes de validación por otro integrante. | 2 |
+| Hecho | Tareas completadas y verificadas. | — |
 
 Cada tarjeta del backlog corresponde a una historia de usuario o a una tarea técnica derivada de los requerimientos de la sección 5. Las reuniones de seguimiento se realizarán semanalmente entre los 3 integrantes, y quedarán registradas en la tabla de seguimiento del documento consolidado del proyecto de aula.
 
