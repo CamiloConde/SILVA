@@ -1,0 +1,31 @@
+SILVA {version} — Sistema Inteligente de Lenguaje Visual Aumentado
+Traductor en tiempo real de la Lengua de Señas Colombiana (LSC) a texto.
+
+CÓMO USARLO
+1. Descomprima esta carpeta completa (no ejecute SILVA.exe desde dentro del .zip).
+2. Abra SILVA.exe.
+   Si Windows muestra «Windows protegió su PC», haga clic en «Más información» y luego en
+   «Ejecutar de todas formas». Aparece porque el programa no está firmado digitalmente.
+3. Presione «Iniciar» (o Enter) y permita el acceso a la cámara si Windows lo pide.
+
+MODOS
+- Deletreo: 17 letras estáticas del alfabeto dactilológico (A B C D E F I K L O R T U V W X Y).
+  Sostenga la seña hasta que la barra de estabilidad se llene.
+- Palabras: 33 expresiones de cortesía (hola, gracias, por favor, buenos días…).
+  Deben verse sus hombros y manos. Empiece con las manos abajo, haga la seña y vuelva a bajarlas.
+- Responder (Ctrl+R): la persona oyente escribe su respuesta y se muestra en grande para que
+  la persona sorda la lea.
+
+REQUISITOS
+Windows 10 u 11 de 64 bits, cámara web, 8 GB de RAM recomendados. No necesita internet ni
+instalar Python. SILVA no envía datos a ningún servidor: el video se procesa en este equipo.
+
+DATOS
+El historial de sesiones se guarda en  %LOCALAPPDATA%\SILVA\historial.db
+
+COMPROBAR LA INSTALACIÓN
+Desde una terminal en esta carpeta:  SILVA.exe --verificar --camara
+Crea el informe %LOCALAPPDATA%\SILVA\verificacion.txt
+
+Código fuente, documentación y créditos: https://github.com/CamiloConde/SILVA
+Licencias de terceros: TERCEROS.md
