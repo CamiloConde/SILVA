@@ -530,6 +530,3 @@ Zhang, F., Bazarevsky, V., Vakunov, A., Tkachenka, A., Sung, G., Chang, C.-L. y 
 | F | Manual de instalación y uso | [README.md](../README.md) y `LEEME.txt` dentro del ejecutable |
 | G | Capturas de la interfaz | [docs/capturas/](../docs/capturas/) |
 
-## 15. Declaración de uso de herramientas de inteligencia artificial
-
-[Completar y revisar por el equipo.] Durante las iteraciones 1 a 4 se usó un asistente de programación con inteligencia artificial (Claude Code, de Anthropic) para escribir buena parte del código, los scripts de entrenamiento, las pruebas y el borrador de este documento, a partir de las instrucciones y decisiones del equipo. El equipo debe declarar aquí qué partes revisó, modificó y validó cada integrante, y confirmar que puede explicar y sustentar cada decisión técnica, como exigen los lineamientos del proyecto de aula (sección 3 de la plantilla: «Cada integrante deberá evidenciar participación real en el proyecto»).
