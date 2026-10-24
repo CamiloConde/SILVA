@@ -1,0 +1,16 @@
+# Entorno
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Copia local del repositorio externo (se descarga con scripts/preparar_dataset.py)
+data/externo/
+
+# Historial de sesiones del usuario (datos locales, no se versionan)
+data/historial.db
+
+# Ejecutable (scripts/construir_ejecutable.py)
+build/
+dist/

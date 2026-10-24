@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silva"
+version = "1.0.0"
+description = "SILVA: traducción en tiempo real de señas de la Lengua de Señas Colombiana (letras estáticas y 33 expresiones) a texto"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "mediapipe==0.10.21",  # fijo: las versiones posteriores envían telemetría (ver requirements.txt)
+    "scikit-learn>=1.5",
+    "numpy<2",
+    "PySide6-Essentials>=6.8",
+    "joblib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+silva = "silva.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

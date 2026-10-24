@@ -1,0 +1,15 @@
+# Versiones verificadas con Python 3.12.10 en Windows 11.
+#
+# MediaPipe queda FIJO en 0.10.21: las versiones que publica Google desde la 0.10.22
+# envían estadísticas de uso a play.googleapis.com sin forma de desactivarlo
+# (https://github.com/google-ai-edge/mediapipe/issues/6291), lo que incumple RNF-01.
+# Verificado con netstat: con 0.10.21 la app no abre ninguna conexión de red.
+# No actualizar mediapipe sin repetir esa verificación (docs/pruebas.md, PR-30).
+mediapipe==0.10.21
+opencv-contrib-python==4.11.0.86  # lo instala mediapipe; no instale además opencv-python
+numpy==1.26.4
+protobuf==4.25.9
+scikit-learn==1.9.1
+PySide6-Essentials==6.12.0  # interfaz (Qt, licencia LGPL)
+joblib==1.6.0
+pytest==9.1.1
