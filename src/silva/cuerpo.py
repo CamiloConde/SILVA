@@ -1,0 +1,178 @@
+"""Detección de cuerpo + ambas manos y características para señas con movimiento (modo Palabras).
+
+A diferencia de las letras, en una palabra importa dónde está la mano respecto
+al cuerpo (frente, pecho, mentón) y cómo se mueve. Por eso cada cuadro se
+describe en un sistema de referencia centrado en los hombros:
+  origen = punto medio entre los hombros, escala = ancho de hombros.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import cv2
+import mediapipe as mp
+import numpy as np
+from mediapipe.tasks.python import BaseOptions, vision
+
+from silva import config
+from silva.modelo import Landmark
+
+# Índices de MediaPipe Pose usados: nariz, hombros, codos y muñecas (izq./der. de la persona)
+POSE_USADOS = [0, 11, 12, 13, 14, 15, 16]
+ESPEJO_POSE = [0, 2, 1, 4, 3, 6, 5]  # posición de cada punto al espejar (izquierda <-> derecha)
+MUNECA_IZQ, MUNECA_DER = 15, 16
+
+N_POSE = len(POSE_USADOS) * 2
+N_MANO = 21 * 2 + 1  # 21 puntos (x, y) + bandera de presencia
+N_CARACTERISTICAS_CUADRO = N_POSE + 2 * N_MANO  # 100
+
+
+@dataclass
+class CuadroCuerpo:
+    """Resultado de un cuadro: pose (33 puntos) y manos asignadas a cada lado de la persona."""
+
+    pose: list[Landmark] | None
+    mano_izquierda: list[Landmark] | None
+    mano_derecha: list[Landmark] | None
+    aspecto: float  # ancho / alto de la imagen
+
+    @property
+    def hay_mano(self) -> bool:
+        return self.mano_izquierda is not None or self.mano_derecha is not None
+
+
+def asignar_manos(pose: list[Landmark] | None, manos: list[list[Landmark]]):
+    """Asigna cada mano detectada al lado de la persona según la muñeca de la pose más cercana.
+
+    No se usa la etiqueta de lateralidad de MediaPipe porque depende de si la
+    imagen está espejada, y eso cambia entre videos y cámara web.
+    """
+    if not manos:
+        return None, None
+    if pose is None:  # sin pose: la mano más a la derecha de la imagen es la izquierda de la persona
+        ordenadas = sorted(manos, key=lambda m: m[0].x)
+        if len(ordenadas) == 1:
+            return (ordenadas[0], None) if ordenadas[0][0].x > 0.5 else (None, ordenadas[0])
+        return ordenadas[1], ordenadas[0]
+    def dist(mano, muneca):
+        return (mano[0].x - muneca.x) ** 2 + (mano[0].y - muneca.y) ** 2
+
+    mi, md = pose[MUNECA_IZQ], pose[MUNECA_DER]
+    if len(manos) == 1:
+        m = manos[0]
+        return (m, None) if dist(m, mi) <= dist(m, md) else (None, m)
+    a, b = manos[0], manos[1]
+    if dist(a, mi) + dist(b, md) <= dist(b, mi) + dist(a, md):
+        return a, b
+    return b, a
+
+
+def caracteristicas_cuadro(c: CuadroCuerpo) -> np.ndarray | None:
+    """Vector de 100 valores del cuadro, o None si no hay pose (no hay referencia corporal)."""
+    if c.pose is None:
+        return None
+    a = c.aspecto
+
+    def xy(lm: Landmark) -> tuple[float, float]:
+        return lm.x * a, lm.y  # unidades proporcionales (independiente de 4:3 o 16:9)
+
+    hi, hd = np.array(xy(c.pose[11])), np.array(xy(c.pose[12]))
+    origen = (hi + hd) / 2
+    escala = float(np.linalg.norm(hi - hd))
+    if escala < 1e-6:
+        return None
+
+    def normalizar(puntos: list[Landmark]) -> np.ndarray:
+        return ((np.array([xy(p) for p in puntos]) - origen) / escala).ravel()
+
+    partes = [normalizar([c.pose[i] for i in POSE_USADOS])]
+    for mano in (c.mano_izquierda, c.mano_derecha):
+        if mano is None:
+            partes.append(np.zeros(N_MANO))
+        else:
+            partes.append(np.append(normalizar(mano), 1.0))
+    return np.concatenate(partes).astype(np.float32)
+
+
+def espejar(secuencia: np.ndarray) -> np.ndarray:
+    """Espeja una secuencia (T x 100): simula a una persona zurda/diestra."""
+    s = secuencia.copy()
+    pose = s[:, :N_POSE].reshape(len(s), -1, 2)[:, ESPEJO_POSE]
+    pose[..., 0] *= -1
+    izq = s[:, N_POSE:N_POSE + N_MANO].copy()
+    der = s[:, N_POSE + N_MANO:].copy()
+    for mano in (izq, der):
+        mano[:, 0:42:2] *= -1 * (mano[:, 42:43] > 0)  # solo si la mano está presente
+    s[:, :N_POSE] = pose.reshape(len(s), -1)
+    s[:, N_POSE:N_POSE + N_MANO] = der
+    s[:, N_POSE + N_MANO:] = izq
+    return s
+
+
+class DetectorCuerpo:
+    def __init__(
+        self,
+        ruta_manos: Path = config.RUTA_MODELO_MANOS,
+        ruta_pose: Path = config.RUTA_MODELO_POSE,
+    ) -> None:
+        for ruta in (ruta_manos, ruta_pose):
+            if not ruta.exists():
+                raise FileNotFoundError(f"No se encontró el modelo de MediaPipe en {ruta}")
+        self._manos = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=str(ruta_manos)),
+            running_mode=vision.RunningMode.VIDEO,
+            num_hands=2,
+            min_hand_detection_confidence=config.CONFIANZA_DETECCION,
+            min_hand_presence_confidence=config.CONFIANZA_DETECCION,
+            min_tracking_confidence=config.CONFIANZA_SEGUIMIENTO,
+        ))
+        self._pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=str(ruta_pose)),
+            running_mode=vision.RunningMode.VIDEO,
+            num_poses=1,
+        ))
+        self._ultimo_ms = -1
+
+    def detectar(self, cuadro_bgr: np.ndarray, marca_tiempo_ms: int) -> CuadroCuerpo:
+        marca_tiempo_ms = max(marca_tiempo_ms, self._ultimo_ms + 1)
+        self._ultimo_ms = marca_tiempo_ms
+        alto, ancho = cuadro_bgr.shape[:2]
+        imagen = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(cuadro_bgr, cv2.COLOR_BGR2RGB))
+
+        r_pose = self._pose.detect_for_video(imagen, marca_tiempo_ms)
+        r_manos = self._manos.detect_for_video(imagen, marca_tiempo_ms)
+        pose = [Landmark(p.x, p.y) for p in r_pose.pose_landmarks[0]] if r_pose.pose_landmarks else None
+        manos = [[Landmark(p.x, p.y) for p in m] for m in r_manos.hand_landmarks]
+        izquierda, derecha = asignar_manos(pose, manos)
+        return CuadroCuerpo(pose, izquierda, derecha, ancho / alto)
+
+    def cerrar(self) -> None:
+        self._manos.close()
+        self._pose.close()
+
+
+POSE_CONEXIONES = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 24), (23, 24)]
+
+
+def dibujar_cuerpo(cuadro_bgr: np.ndarray, c: CuadroCuerpo) -> None:
+    """Dibuja hombros, brazos y ambas manos sobre el cuadro (in situ)."""
+    from silva.detector_manos import CONEXIONES_MANO
+
+    alto, ancho = cuadro_bgr.shape[:2]
+
+    def px(lm: Landmark) -> tuple[int, int]:
+        return int(lm.x * ancho), int(lm.y * alto)
+
+    if c.pose is not None:
+        for a, b in POSE_CONEXIONES:
+            cv2.line(cuadro_bgr, px(c.pose[a]), px(c.pose[b]), (200, 160, 90), 2, cv2.LINE_AA)
+    for mano, color in ((c.mano_izquierda, (255, 140, 40)), (c.mano_derecha, (90, 120, 255))):
+        if mano is None:
+            continue
+        puntos = [px(lm) for lm in mano]
+        for a, b in CONEXIONES_MANO:
+            cv2.line(cuadro_bgr, puntos[a], puntos[b], (80, 200, 120), 2, cv2.LINE_AA)
+        for p in puntos:
+            cv2.circle(cuadro_bgr, p, 3, color, cv2.FILLED, cv2.LINE_AA)
