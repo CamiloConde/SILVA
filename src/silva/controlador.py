@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -18,9 +19,33 @@ from silva.repositorio_historial import RepositorioHistorial
 
 MODO_LETRAS = "letras"
 MODO_PALABRAS = "palabras"
+# Resolución pedida a la cámara en cada modo. Las palabras usan 16:9 porque muchas cámaras de
+# portátil recortan los lados en 4:3 y en este modo hace falta ver hombros y brazos (los videos de
+# LSC-54 también son 16:9). Las letras siguen en 4:3, el formato con que se entrenó su modelo.
+RESOLUCION = {MODO_LETRAS: (640, 480), MODO_PALABRAS: (1280, 720)}
 # Si la misma palabra sale dos veces casi seguidas, es casi siempre una seña partida
 # en dos (la mano se perdió un instante), no una repetición: se escribe una sola vez.
 CUADROS_REPETICION = 20
+SEGUNDOS_CONFIRMACION = 2.5  # una palabra provisional se escribe sola tras este tiempo si nadie la corrige
+SEGUNDOS_SUGERENCIA = 6.0  # un «¿Quiso decir…?» desaparece sin escribir nada tras este tiempo
+
+
+@dataclass(frozen=True)
+class PalabraPendiente:
+    """Palabra reconocida que aún no se escribe, para que alguien pueda confirmarla o corregirla.
+
+    - provisional (`automatica=True`): la seña es segura; se escribe sola al vencer el plazo.
+    - sugerencia (`automatica=False`): la seña es dudosa; solo se escribe si alguien elige una opción.
+    """
+
+    opciones: tuple[Prediccion, ...]  # hasta 3, de la más a la menos probable
+    automatica: bool
+    creada: float
+    vence: float
+
+    def progreso(self, ahora: float) -> float:
+        """Fracción del plazo ya transcurrida (0 → 1)."""
+        return min(max((ahora - self.creada) / (self.vence - self.creada), 0.0), 1.0)
 
 
 @dataclass
@@ -34,7 +59,8 @@ class ResultadoCuadro:
     fps: float
     cuerpo: CuadroCuerpo | None = None  # solo en modo Palabras
     grabando_sena: bool = False  # modo Palabras: hay una seña en curso
-    descartada: Prediccion | None = None  # modo Palabras: seña terminada pero con confianza baja
+    pendiente: PalabraPendiente | None = None  # modo Palabras: palabra por confirmar o sugerencia
+    ahora: float = 0.0
 
     @property
     def mano_detectada(self) -> bool:
@@ -54,6 +80,8 @@ class ControladorSILVA:
         detector_cuerpo: DetectorCuerpo | None = None,
         clasificador_palabras: ClasificadorPalabras | None = None,
         umbral_palabras: float = 0.5,
+        umbral_sugerencia: float = 0.12,
+        reloj: Callable[[], float] = time.monotonic,
     ) -> None:
         self.captura = captura
         self.detector = detector
@@ -63,7 +91,10 @@ class ControladorSILVA:
         self.detector_cuerpo = detector_cuerpo
         self.clasificador_palabras = clasificador_palabras
         self.umbral_palabras = umbral_palabras
+        self.umbral_sugerencia = umbral_sugerencia
+        self._reloj = reloj
         self.segmentador = SegmentadorSenas()
+        self.pendiente: PalabraPendiente | None = None
         self._ultima_palabra: str | None = None
         self._cuadros_desde_palabra = 0
         self.modo = MODO_LETRAS
@@ -81,17 +112,21 @@ class ControladorSILVA:
     def cambiar_modo(self, modo: str) -> None:
         if modo == MODO_PALABRAS and not self.palabras_disponibles:
             raise RuntimeError("El modo Palabras no está disponible (falta el modelo)")
+        self._cerrar_pendiente()
         self.modo = modo
         self.segmentador.reiniciar()
         self.buffer.reiniciar_deteccion()
+        self.captura.configurar(*RESOLUCION[modo])
 
     def iniciar(self) -> None:
         """CU-01. El modelo ya está cargado (en el constructor); aquí se abre la cámara."""
         if self.activo:
             return
+        self.captura.configurar(*RESOLUCION[self.modo])
         self.captura.abrir()  # puede lanzar CamaraNoDisponibleError
         self.buffer.limpiar()
         self.segmentador.reiniciar()
+        self.pendiente = None
         self.ultima_confianza = None
         self.sesion_id = self.historial.iniciar_sesion()
         self._t_anterior = None
@@ -127,26 +162,33 @@ class ControladorSILVA:
         )
 
     def _procesar_palabras(self, cuadro: np.ndarray, marca_ms: int) -> ResultadoCuadro:
+        ahora = self._reloj()
         cuerpo = self.detector_cuerpo.detectar(cuadro, marca_ms)
         estado = self.segmentador.agregar(caracteristicas_cuadro(cuerpo))
-
-        prediccion = confirmada = descartada = None
         self._cuadros_desde_palabra += 1
+        confirmada = None
+
+        # La pendiente se resuelve al vencer su plazo o cuando empieza una seña nueva
+        # (seguir signando = aceptar la provisional e ignorar la sugerencia).
+        if self.pendiente is not None and (estado.grabando or ahora >= self.pendiente.vence):
+            confirmada = self._cerrar_pendiente()
+
+        prediccion = None
         if estado.terminada is not None:
-            prediccion = self.clasificador_palabras.predecir(estado.terminada)
+            evaluacion = self.clasificador_palabras.evaluar(estado.terminada)
+            prediccion = evaluacion.mejor
             repetida = (prediccion.letra == self._ultima_palabra
                         and self._cuadros_desde_palabra - len(estado.terminada) < CUADROS_REPETICION)
-            if repetida:
-                prediccion = None
-            elif prediccion.confianza >= self.umbral_palabras:
+            segura = prediccion.confianza >= self.umbral_palabras and prediccion.confianza >= evaluacion.prob_otra
+            dudosa = (prediccion.confianza >= self.umbral_sugerencia
+                      and prediccion.confianza >= 0.5 * evaluacion.prob_otra)
+            if not repetida and (segura or dudosa):
+                if self.pendiente is not None:  # caso raro: dos señas sin cuadro intermedio
+                    confirmada = self._cerrar_pendiente() or confirmada
+                plazo = SEGUNDOS_CONFIRMACION if segura else SEGUNDOS_SUGERENCIA
+                self.pendiente = PalabraPendiente(tuple(evaluacion.opciones[:3]), segura, ahora, ahora + plazo)
                 self._ultima_palabra = prediccion.letra
                 self._cuadros_desde_palabra = 0
-                confirmada = prediccion.letra
-                self.buffer.agregar_palabra(confirmada)
-                self.ultima_confianza = prediccion.confianza
-                self.historial.registrar_letra(self.sesion_id, confirmada, prediccion.confianza)
-            else:
-                descartada = prediccion
 
         return ResultadoCuadro(
             cuadro=cuadro,
@@ -158,13 +200,42 @@ class ControladorSILVA:
             fps=self._medir_fps(),
             cuerpo=cuerpo,
             grabando_sena=estado.grabando,
-            descartada=descartada,
+            pendiente=self.pendiente,
+            ahora=ahora,
         )
+
+    # ---------------------------------------------------- corrección (RF-13)
+    def confirmar_pendiente(self, opcion: int = 0) -> str | None:
+        """Escribe la opción elegida (0 = la más probable) de la palabra pendiente."""
+        if self.pendiente is None or opcion >= len(self.pendiente.opciones):
+            return None
+        elegida = self.pendiente.opciones[opcion]
+        self.pendiente = None
+        self._ultima_palabra = elegida.letra
+        self.buffer.agregar_palabra(elegida.letra)
+        self.ultima_confianza = elegida.confianza
+        self.historial.registrar_letra(self.sesion_id, elegida.letra, elegida.confianza)
+        return elegida.letra
+
+    def descartar_pendiente(self) -> None:
+        if self.pendiente is not None:
+            self._ultima_palabra = None  # permite volver a hacer la misma seña de inmediato
+        self.pendiente = None
+
+    def _cerrar_pendiente(self) -> str | None:
+        """La provisional se escribe; la sugerencia se descarta."""
+        if self.pendiente is None:
+            return None
+        if self.pendiente.automatica:
+            return self.confirmar_pendiente(0)
+        self.pendiente = None
+        return None
 
     def detener(self) -> None:
         """CU-05: primero se guarda el texto y después se libera la cámara (Figura 5)."""
         if not self.activo:
             return
+        self._cerrar_pendiente()
         self.activo = False
         self.historial.guardar_sesion(self.sesion_id, self.buffer.texto)
         self.captura.liberar()
@@ -172,6 +243,7 @@ class ControladorSILVA:
     def cerrar(self) -> None:
         """Cierre de la aplicación: detener, cerrar historial y liberar recursos."""
         if self.activo:
+            self._cerrar_pendiente()
             self.historial.guardar_sesion(self.sesion_id, self.buffer.texto)
             self.activo = False
         self.historial.cerrar()

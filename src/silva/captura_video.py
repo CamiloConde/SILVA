@@ -9,6 +9,8 @@ import numpy as np
 
 from silva import config
 
+ANCHO_PROCESO = 640  # los cuadros más anchos se reducen a este ancho (mismo campo de visión, menos cómputo)
+
 
 class CamaraNoDisponibleError(RuntimeError):
     """La cámara no existe o la está usando otra aplicación (alt de la Figura 3)."""
@@ -16,18 +18,26 @@ class CamaraNoDisponibleError(RuntimeError):
 
 class CapturaVideo:
     def __init__(self, indice: int = config.INDICE_CAMARA) -> None:
-        self._indice = indice
+        self.indice = indice  # 0 = cámara integrada; 1, 2… = cámaras externas o el celular como cámara web
+        self._resolucion = (640, 480)
         self._cap: cv2.VideoCapture | None = None
+
+    def configurar(self, ancho: int, alto: int) -> None:
+        """Resolución pedida a la cámara; si ya está abierta se aplica en caliente."""
+        self._resolucion = (ancho, alto)
+        if self.abierta:
+            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, ancho)
+            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, alto)
 
     def abrir(self) -> None:
         # En Windows DirectShow abre la cámara mucho más rápido que el backend por defecto (RF-01: < 3 s).
         backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
-        cap = cv2.VideoCapture(self._indice, backend)
+        cap = cv2.VideoCapture(self.indice, backend)
         if not cap.isOpened():
             cap.release()
-            raise CamaraNoDisponibleError(f"No se pudo abrir la cámara {self._indice}")
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            raise CamaraNoDisponibleError(f"No se pudo abrir la cámara {self.indice + 1}")
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._resolucion[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._resolucion[1])
         self._cap = cap
 
     @property
@@ -38,7 +48,13 @@ class CapturaVideo:
         if not self.abierta:
             return None
         ok, cuadro = self._cap.read()
-        return cuadro if ok else None
+        if not ok:
+            return None
+        alto, ancho = cuadro.shape[:2]
+        if ancho > ANCHO_PROCESO:
+            cuadro = cv2.resize(cuadro, (ANCHO_PROCESO, round(alto * ANCHO_PROCESO / ancho)),
+                                interpolation=cv2.INTER_AREA)
+        return cuadro
 
     def liberar(self) -> None:
         if self._cap is not None:

@@ -154,3 +154,60 @@ def test_responder_muestra_en_grande_y_guarda(app):
     ventana.video.mousePressEvent(clic)
     assert not ventana.video.mostrando_respuesta
     ventana.close()
+
+
+def _ventana_palabras(app):
+    """Ventana en modo Palabras con una palabra pendiente puesta a mano (sin hilo de video)."""
+    if not config.RUTA_MODELO_PALABRAS.exists():
+        pytest.skip("Falta modelos/modelo_palabras.pkl")
+    from silva.palabras import ClasificadorPalabras
+
+    class CuerpoFalso:
+        def cerrar(self):
+            pass
+
+    ctrl = ControladorSILVA(CapturaFalsa(), DetectorFalso([]), ClasificadorLetras([]), RepositorioHistorial(":memory:"),
+                            detector_cuerpo=CuerpoFalso(), clasificador_palabras=ClasificadorPalabras())
+    ventana = VentanaPrincipal(ctrl)
+    ventana.cambiar_modo(MODO_PALABRAS)
+    ctrl.sesion_id = ctrl.historial.iniciar_sesion()
+    return ventana, ctrl
+
+
+def _pendiente(automatica):
+    from silva.controlador import PalabraPendiente
+    return PalabraPendiente((Prediccion("Hola", 0.8), Prediccion("Chao", 0.1), Prediccion("Bien", 0.05)),
+                            automatica, 0.0, 2.5)
+
+
+def test_palabra_provisional_se_puede_corregir(app):
+    """RF-13: la palabra reconocida se muestra con opciones y se puede cambiar antes de escribirse."""
+    ventana, ctrl = _ventana_palabras(app)
+    ctrl.pendiente = _pendiente(True)
+    ventana._mostrar_pendiente(ctrl.pendiente, 1.0)
+    assert ventana.panel_pendiente.isVisibleTo(ventana)
+    assert "Chao" in ventana.btn_opciones[1].text()
+    ventana.btn_opciones[1].click()  # la persona corrige: era «Chao»
+    assert ctrl.buffer.texto == "Chao"
+    assert not ventana.panel_pendiente.isVisibleTo(ventana)
+    ventana.close()
+
+
+def test_sugerencia_se_descarta_y_espacio_confirma(app):
+    ventana, ctrl = _ventana_palabras(app)
+    ctrl.pendiente = _pendiente(False)
+    ventana._mostrar_pendiente(ctrl.pendiente, 1.0)
+    assert not ventana.btn_confirmar.isVisibleTo(ventana)  # una sugerencia no tiene «Confirmar»: se elige
+    ventana.descartar()
+    assert ctrl.pendiente is None and ctrl.buffer.texto == ""
+    ctrl.pendiente = _pendiente(True)
+    ventana.espacio()  # en modo Palabras, Espacio confirma la provisional
+    assert ctrl.buffer.texto == "Hola"
+    ventana.close()
+
+
+def test_selector_de_camara(app):
+    ventana, ctrl, _ = crear(app)
+    ventana.combo_camara.setCurrentIndex(2)
+    assert ctrl.captura.indice == 2
+    ventana.close()

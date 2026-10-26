@@ -14,6 +14,11 @@ class CapturaFalsa:
         self.registro = registro if registro is not None else []
         self.disponible = disponible
         self.abierta = False
+        self.indice = 0
+        self.resolucion = (640, 480)
+
+    def configurar(self, ancho: int, alto: int) -> None:
+        self.resolucion = (ancho, alto)
 
     def abrir(self) -> None:
         from silva.captura_video import CamaraNoDisponibleError

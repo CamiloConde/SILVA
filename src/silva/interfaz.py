@@ -19,14 +19,14 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLayout, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+    QComboBox, QHeaderView, QLabel, QLayout, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QTabWidget,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from silva import __version__, config
 from silva.captura_video import CamaraNoDisponibleError
-from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, ResultadoCuadro
+from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, PalabraPendiente, ResultadoCuadro
 from silva.cuerpo import dibujar_cuerpo
 from silva.detector_manos import dibujar_mano
 
@@ -114,6 +114,17 @@ QTabWidget::pane {{ border: none; }}
 QTabBar::tab {{ background: {TARJETA}; color: {SUAVE}; padding: 7px 16px; border-radius: 7px; margin-right: 4px;
                font-weight: 600; }}
 QTabBar::tab:selected {{ background: {ACENTO}; color: white; }}
+#pendiente {{ background: {TARJETA_2}; border-radius: 10px; }}
+#pendiente[tipo="provisional"] {{ border: 1px solid {OK}; }}
+#pendiente[tipo="sugerencia"] {{ border: 1px solid {ALERTA}; }}
+QPushButton#opcion {{ background: {TARJETA}; color: {TEXTO}; border: 1px solid {BORDE}; border-radius: 8px;
+                      padding: 6px 8px; font-weight: 600; text-align: left; }}
+QPushButton#opcion:hover {{ border: 1px solid {ACENTO}; }}
+QPushButton#opcion[principal="true"] {{ border: 1px solid {OK}; }}
+QComboBox#camara {{ background: {TARJETA}; border: 1px solid {BORDE}; border-radius: 8px; padding: 5px 10px;
+                    color: {SUAVE}; font-weight: 600; min-width: 150px; }}
+QComboBox#camara:disabled {{ color: {TENUE}; }}
+QComboBox#camara QAbstractItemView {{ background: {TARJETA}; color: {TEXTO}; selection-background-color: {ACENTO}; }}
 QToolTip {{ background: {TARJETA_2}; color: {TEXTO}; border: 1px solid {BORDE}; }}
 """
 
@@ -192,7 +203,7 @@ class TrabajadorVideo(QThread):
                 self.msleep(5)
                 continue
             # Si la ventana va atrasada se salta el cuadro, salvo que traiga un evento (letra/palabra)
-            hay_evento = r.letra_confirmada is not None or r.descartada is not None
+            hay_evento = r.letra_confirmada is not None or (r.cuerpo is not None and r.prediccion is not None)
             if self.interfaz_libre.is_set() or hay_evento:
                 self.interfaz_libre.clear()
                 self.cuadro_listo.emit(r, componer_imagen(r))
@@ -208,6 +219,7 @@ class VideoWidget(QWidget):
         super().__init__()
         self._imagen: QImage | None = None
         self._respuesta: str | None = None
+        self._pendiente: tuple[list[str], bool, float] | None = None  # (opciones, provisional, progreso)
         self._aviso = ""
         self._banda: str | None = None
         self._grabando = False
@@ -224,11 +236,20 @@ class VideoWidget(QWidget):
     def poner_aviso(self, texto: str) -> None:
         """Quita el video y muestra un mensaje centrado."""
         self._imagen, self._aviso, self._banda, self._grabando = None, texto, None, False
+        self._pendiente = None
         self.update()
 
     def poner_banda(self, texto: str | None) -> None:
         if texto != self._banda:
             self._banda = texto
+            self.update()
+
+    def poner_pendiente(self, opciones: list[str] | None, provisional: bool = True, progreso: float = 0.0) -> None:
+        """RF-13: palabra por confirmar (provisional) o «¿Quiso decir…?» (sugerencia), en grande sobre el video
+        para que la vea también quien signa, a distancia."""
+        nuevo = None if not opciones else (list(opciones), provisional, round(progreso, 2))
+        if nuevo != self._pendiente:
+            self._pendiente = nuevo
             self.update()
 
     def poner_respuesta(self, texto: str | None) -> None:
@@ -292,9 +313,14 @@ class VideoWidget(QWidget):
             p.setFont(QFont("Segoe UI Semibold", 10))
             p.drawText(pastilla.adjusted(34, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, "Grabando seña")
 
+        if self._pendiente is not None:
+            self._pintar_pendiente(p)
+
         if self._banda:
             p.setFont(QFont("Segoe UI Semibold", 11))
-            banda = QRectF(16, self.height() - 62, self.width() - 32, 44)
+            # con una palabra pendiente abajo, el aviso sube para no taparla
+            y_banda = 56 if self._pendiente is not None else self.height() - 62
+            banda = QRectF(16, y_banda, self.width() - 32, 44)
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(120, 53, 15, 225))
             p.drawRoundedRect(banda, 12, 12)
@@ -302,6 +328,38 @@ class VideoWidget(QWidget):
             p.drawText(banda.adjusted(12, 0, -12, 0), Qt.AlignCenter | Qt.TextWordWrap, self._banda)
 
         p.end()
+
+    def _pintar_pendiente(self, p: QPainter) -> None:
+        opciones, provisional, progreso = self._pendiente
+        ancho = min(self.width() - 32, 560)
+        tarjeta = QRectF((self.width() - ancho) / 2, self.height() - 134, ancho, 118)
+        color = QColor(OK if provisional else ALERTA)
+        p.setPen(color)
+        p.setBrush(QColor(2, 6, 23, 230))
+        p.drawRoundedRect(tarjeta, 14, 14)
+        interior = tarjeta.adjusted(18, 10, -18, -12)
+        p.setFont(QFont("Segoe UI Semibold", 9))
+        p.setPen(color)
+        p.drawText(interior, Qt.AlignTop | Qt.AlignLeft,
+                   "SE ESCRIBIRÁ…" if provisional else "¿QUISO DECIR…?")
+        p.setPen(QColor(TEXTO))
+        if provisional:
+            p.setFont(QFont("Segoe UI Semibold", 26))
+            p.drawText(interior.adjusted(0, 14, 0, -22), Qt.AlignCenter, opciones[0])
+            pie = "Espacio: confirmar  ·  1–3: cambiar  ·  X: descartar"
+        else:
+            p.setFont(QFont("Segoe UI Semibold", 17))
+            texto = "     ".join(f"{i + 1}  {o}" for i, o in enumerate(opciones))
+            p.drawText(interior.adjusted(0, 14, 0, -22), Qt.AlignCenter, texto)
+            pie = "Elija con 1, 2 o 3  ·  X: descartar  ·  si nadie elige, no se escribe"
+        p.setFont(QFont("Segoe UI", 9))
+        p.setPen(QColor(SUAVE))
+        p.drawText(interior, Qt.AlignBottom | Qt.AlignHCenter, pie)
+        # barra del plazo: se llena hasta que la palabra se escribe (o la sugerencia desaparece)
+        barra = QRectF(tarjeta.left() + 14, tarjeta.bottom() - 6, (ancho - 28) * progreso, 3)
+        p.setPen(Qt.NoPen)
+        p.setBrush(color)
+        p.drawRoundedRect(barra, 1.5, 1.5)
 
     def _pintar_respuesta(self, p: QPainter) -> None:
         p.fillRect(self.rect(), QColor(2, 6, 23, 235))
@@ -389,7 +447,6 @@ class VentanaPrincipal(QWidget):
         self._trabajador: TrabajadorVideo | None = None
         self._chips: dict[str, QLabel] = {}
         self._chip_activo: str | None = None
-        self._aviso_temporal: tuple[str, float] | None = None
         self._dialogo_historial: QDialog | None = None
         self.mostrar_error = self._mostrar_error  # reemplazable en pruebas
 
@@ -434,6 +491,17 @@ class VentanaPrincipal(QWidget):
             self.btn_modo[MODO_PALABRAS].setEnabled(False)
             self.btn_modo[MODO_PALABRAS].setToolTip("Falta modelos/modelo_palabras.pkl")
         cab.addWidget(selector, 0, Qt.AlignVCenter)
+        cab.addSpacing(12)
+        self.combo_camara = QComboBox()
+        self.combo_camara.setObjectName("camara")
+        self.combo_camara.setFocusPolicy(Qt.NoFocus)
+        self.combo_camara.addItems(["📷  Cámara 1 (integrada)", "📷  Cámara 2", "📷  Cámara 3", "📷  Cámara 4"])
+        self.combo_camara.setCurrentIndex(getattr(self.ctrl.captura, "indice", 0))
+        self.combo_camara.setToolTip(
+            "Elija otra cámara, por ejemplo el celular como cámara web (con Enlace Móvil de Windows 11\n"
+            "o una app como DroidCam o Iriun). El celular se puede ubicar más lejos y apuntar mejor.")
+        self.combo_camara.currentIndexChanged.connect(self._cambiar_camara)
+        cab.addWidget(self.combo_camara, 0, Qt.AlignVCenter)
         cab.addStretch()
         self.lbl_pastilla = _etiqueta("", "pastilla")
         cab.addWidget(self.lbl_pastilla, 0, Qt.AlignVCenter)
@@ -502,7 +570,7 @@ class VentanaPrincipal(QWidget):
         v.addWidget(self.lbl_titulo_det)
         self.marco_detectada = QFrame()
         self.marco_detectada.setObjectName("detectada")
-        self.marco_detectada.setFixedHeight(150)
+        self.marco_detectada.setFixedHeight(120)
         dentro = QVBoxLayout(self.marco_detectada)
         self.lbl_letra = _etiqueta("–", "letra")
         self.lbl_letra.setAlignment(Qt.AlignCenter)
@@ -548,6 +616,29 @@ class VentanaPrincipal(QWidget):
         self.lbl_ultima.setMinimumHeight(22)
         v.addWidget(self.lbl_ultima)
         v.addSpacing(8)
+
+        # RF-13: confirmar o corregir la palabra reconocida antes de que se escriba
+        self.panel_pendiente = QFrame()
+        self.panel_pendiente.setObjectName("pendiente")
+        vp = QVBoxLayout(self.panel_pendiente)
+        vp.setContentsMargins(12, 10, 12, 12)
+        vp.setSpacing(6)
+        self.lbl_pendiente = _etiqueta("", "seccion")
+        vp.addWidget(self.lbl_pendiente)
+        self.btn_opciones = []
+        for i in range(3):
+            b = _boton("", "opcion", lambda _=False, k=i: self.elegir(k))
+            vp.addWidget(b)
+            self.btn_opciones.append(b)
+        fila_p = QHBoxLayout()
+        fila_p.setSpacing(6)
+        self.btn_confirmar = _boton("✓  Confirmar", "secundario", lambda: self.elegir(0))
+        self.btn_descartar = _boton("✕  Descartar", "secundario", self.descartar)
+        fila_p.addWidget(self.btn_confirmar)
+        fila_p.addWidget(self.btn_descartar)
+        vp.addLayout(fila_p)
+        self.panel_pendiente.hide()
+        v.addWidget(self.panel_pendiente)
 
         # Letras o palabras disponibles (QStackedWidget: el panel no cambia de alto al cambiar de modo)
         self.pila = QStackedWidget()
@@ -595,6 +686,9 @@ class VentanaPrincipal(QWidget):
                               (Qt.Key_Delete, self.limpiar)):
             QShortcut(QKeySequence(tecla), self, activated=accion)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self.responder)
+        for i, tecla in enumerate((Qt.Key_1, Qt.Key_2, Qt.Key_3)):
+            QShortcut(QKeySequence(tecla), self, activated=lambda k=i: self.elegir(k))
+        QShortcut(QKeySequence(Qt.Key_X), self, activated=self.descartar)
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=lambda: self.video.poner_respuesta(None))
 
     # -------------------------------------------------------------------- acciones
@@ -624,6 +718,7 @@ class VentanaPrincipal(QWidget):
         self.btn_principal.setText("■  Detener")
         _repulir(self.btn_principal, peligro=True)
         self._poner_pastilla("●  En vivo", "vivo")
+        self.combo_camara.setEnabled(False)
         self.lbl_sesion.setText(f"Sesión #{sesion_id}")
         self.lbl_ultima.setText("")
         self._actualizar_texto()
@@ -678,13 +773,34 @@ class VentanaPrincipal(QWidget):
         self._resaltar(None)
         self.barra_estable.setValue(0)
         self.video.poner_grabando(False)
-        self._aviso_temporal = None
+        self._mostrar_pendiente(None, 0.0)
         self._actualizar_texto()
 
+    def _cambiar_camara(self, indice: int) -> None:
+        if not self.activo:
+            self.ctrl.captura.indice = indice
+
     def espacio(self) -> None:
+        if self.ctrl.modo == MODO_PALABRAS:  # en Palabras, Espacio confirma la palabra pendiente
+            self.elegir(0)
+            return
         with self._candado:
             self.ctrl.buffer.agregar_espacio()
         self._actualizar_texto()
+
+    def elegir(self, opcion: int) -> None:
+        """RF-13: escribe la opción elegida de la palabra pendiente (0 = la más probable)."""
+        with self._candado:
+            pendiente = self.ctrl.pendiente
+            escrita = self.ctrl.confirmar_pendiente(opcion)
+        if escrita is not None:
+            self._mostrar_pendiente(None, 0.0)
+            self._confirmar(escrita, pendiente.opciones[opcion].confianza, "Última palabra")
+
+    def descartar(self) -> None:
+        with self._candado:
+            self.ctrl.descartar_pendiente()
+        self._mostrar_pendiente(None, 0.0)
 
     def borrar(self) -> None:
         with self._candado:
@@ -740,21 +856,50 @@ class VentanaPrincipal(QWidget):
     def _pintar_palabras(self, r: ResultadoCuadro) -> None:
         self.video.poner_grabando(r.grabando_sena)
         self.barra_estable.setValue(int(r.progreso * 100) if r.grabando_sena else 0)
-        if r.descartada is not None:
-            d = r.descartada
-            self._aviso_temporal = (f"No se reconoció la seña (parecía «{d.letra}», {d.confianza:.0%}). Repítala",
-                                    time.monotonic() + 2.5)
-            self._poner_letra(d.letra, dudosa=True)
-            self._poner_confianza(d.confianza)
-        if r.letra_confirmada is not None:
-            self._aviso_temporal = None
-            self._confirmar(r.letra_confirmada, r.prediccion.confianza, "Última palabra")
+        if r.letra_confirmada is not None:  # escrita sola al vencer el plazo o al empezar otra seña
+            self._confirmar(r.letra_confirmada, self.ctrl.ultima_confianza or 0.0, "Última palabra")
+        self._mostrar_pendiente(r.pendiente, r.ahora)
         if r.cuerpo.pose is None:
             self.video.poner_banda("🧍  Colóquese frente a la cámara: deben verse los hombros y las manos")
-        elif self._aviso_temporal and time.monotonic() < self._aviso_temporal[1]:
-            self.video.poner_banda(self._aviso_temporal[0])
+        elif _mano_en_borde(r.cuerpo):
+            self.video.poner_banda("↔  Aléjese un poco: una mano se sale del cuadro")
         else:
             self.video.poner_banda(None)
+
+    def _mostrar_pendiente(self, pendiente: PalabraPendiente | None, ahora: float) -> None:
+        if pendiente is None:
+            # sin palabra por corregir vuelve la lista de palabras; así el panel nunca crece
+            self.panel_pendiente.hide()
+            self.pila.show()
+            self.lbl_ultima.show()
+            self.video.poner_pendiente(None)
+            return
+        self.pila.hide()
+        self.lbl_ultima.hide()
+        opciones = [o.letra for o in pendiente.opciones]
+        self.video.poner_pendiente(opciones, pendiente.automatica, pendiente.progreso(ahora))
+        mejor = pendiente.opciones[0]
+        self._poner_letra(mejor.letra, dudosa=not pendiente.automatica)
+        self._poner_confianza(mejor.confianza)
+        if pendiente.automatica:
+            restante = max(pendiente.vence - ahora, 0.0)
+            self.lbl_pendiente.setText(f"SE ESCRIBIRÁ EN {restante:.0f} S · ¿ES CORRECTA?")
+        else:
+            self.lbl_pendiente.setText("¿QUISO DECIR…? ELIJA UNA OPCIÓN")
+        tipo = "provisional" if pendiente.automatica else "sugerencia"
+        if self.panel_pendiente.property("tipo") != tipo:
+            _repulir(self.panel_pendiente, tipo=tipo)
+        for i, b in enumerate(self.btn_opciones):
+            if i < len(pendiente.opciones):
+                o = pendiente.opciones[i]
+                b.setText(f"{i + 1}   {o.letra}   ·   {o.confianza:.0%}")
+                b.show()
+                if b.property("principal") != (i == 0 and pendiente.automatica):
+                    _repulir(b, principal=(i == 0 and pendiente.automatica))
+            else:
+                b.hide()
+        self.btn_confirmar.setVisible(pendiente.automatica)
+        self.panel_pendiente.show()
 
     def _confirmar(self, texto: str, confianza: float, rotulo: str) -> None:
         self._poner_letra(texto, dudosa=False)
@@ -820,12 +965,13 @@ class VentanaPrincipal(QWidget):
         _repulir(self.btn_principal, peligro=False)
         self.video.poner_aviso("Presione «Iniciar» para encender la cámara")
         self._poner_pastilla("●  Cámara apagada", "apagada")
+        self.combo_camara.setEnabled(True)
+        self._mostrar_pendiente(None, 0.0)
         self.lbl_fps.setText("")
         self._poner_letra("–", dudosa=True)
         self._poner_confianza(None)
         self._resaltar(None)
         self.barra_estable.setValue(0)
-        self._aviso_temporal = None
         self._actualizar_texto()
 
     def _mostrar_error(self, titulo: str, mensaje: str) -> None:
@@ -918,3 +1064,13 @@ class DialogoRespuesta(QDialog):
         if texto:
             self.respuesta_lista.emit(texto)
             self.accept()
+
+
+def _mano_en_borde(c) -> bool:
+    """La mano (o la muñeca estimada por la pose) toca o sale del borde de la imagen."""
+    for mano in (c.mano_izquierda, c.mano_derecha):
+        if mano is not None and any(lm.x < 0.03 or lm.x > 0.97 or lm.y < 0.03 for lm in mano):
+            return True
+    if c.pose is not None:
+        return any(not (0.0 <= c.pose[i].x <= 1.0 and 0.0 <= c.pose[i].y <= 1.0) for i in (15, 16))
+    return False

@@ -122,19 +122,20 @@ def test_clasificador_devuelve_palabra_y_confianza(clasificador):
     assert len(vector_secuencia(seq)) == clasificador._modelo.n_features_in_
 
 
-# ---------- controlador en modo Palabras ----------
+# ---------- controlador en modo Palabras: provisional, sugerencia y corrección ----------
 
 class _SegmentadorGuionado:
-    """Termina una seña en los cuadros indicados."""
+    """Termina una seña en los cuadros indicados; entre `inicio` y fin marca que está grabando."""
 
-    def __init__(self, fines):
-        self.fines, self.n = set(fines), 0
+    def __init__(self, fines, duracion=5):
+        self.fines, self.duracion, self.n = set(fines), duracion, 0
 
     def agregar(self, f):
         from silva.palabras import EstadoSegmentador
         self.n += 1
+        grabando = any(fin - self.duracion <= self.n < fin for fin in self.fines)
         termina = self.n in self.fines
-        return EstadoSegmentador(False, 0, np.zeros((10, N_CARACTERISTICAS_CUADRO)) if termina else None)
+        return EstadoSegmentador(grabando, 0, np.zeros((10, N_CARACTERISTICAS_CUADRO)) if termina else None)
 
     def reiniciar(self):
         pass
@@ -149,45 +150,112 @@ class _CuerpoFalso:
 
 
 class _ClasificadorPalabrasFalso:
+    """Cada seña devuelve (palabra, confianza, prob_otra); las opciones 2 y 3 son fijas."""
+
     nombres = {}
 
     def __init__(self, salidas):
         self.salidas = list(salidas)
 
-    def predecir(self, cuadros):
+    def evaluar(self, cuadros):
         from silva.modelo import Prediccion
-        palabra, confianza = self.salidas.pop(0)
-        return Prediccion(palabra, confianza)
+        from silva.palabras import Evaluacion
+        palabra, confianza, otra = self.salidas.pop(0)
+        return Evaluacion([Prediccion(palabra, confianza), Prediccion("Chao", 0.05), Prediccion("Bien", 0.04)], otra)
 
 
-def _controlador(fines, salidas, umbral=0.2):
+class _Reloj:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+def _controlador(fines, salidas, umbral=0.25):
     from conftest import CapturaFalsa, ClasificadorFalso, DetectorFalso
     from silva.controlador import MODO_PALABRAS, ControladorSILVA
     from silva.repositorio_historial import RepositorioHistorial
+    reloj = _Reloj()
     ctrl = ControladorSILVA(CapturaFalsa(), DetectorFalso([]), ClasificadorFalso([]), RepositorioHistorial(":memory:"),
                             detector_cuerpo=_CuerpoFalso(), clasificador_palabras=_ClasificadorPalabrasFalso(salidas),
-                            umbral_palabras=umbral)
+                            umbral_palabras=umbral, umbral_sugerencia=0.12, reloj=reloj)
     ctrl.cambiar_modo(MODO_PALABRAS)
     ctrl.segmentador = _SegmentadorGuionado(fines)
     ctrl.iniciar()
-    return ctrl
+    return ctrl, reloj
 
 
-def test_palabras_se_escriben_y_las_dudosas_se_piden_repetir():
-    ctrl = _controlador(fines=[20, 60, 100], salidas=[("Hola", 0.9), ("Gracias", 0.1), ("Gracias", 0.6)])
-    descartadas = []
-    for _ in range(110):
-        r = ctrl.procesar_cuadro()
-        if r.descartada:
-            descartadas.append(r.descartada.letra)
-    assert ctrl.buffer.texto == "Hola Gracias"
-    assert descartadas == ["Gracias"]
-    assert [l for l, _ in ctrl.historial.letras_de_sesion(ctrl.sesion_id)] == ["Hola", "Gracias"]
+def _avanzar(ctrl, reloj, cuadros, paso=1 / 30):
+    resultados = []
+    for _ in range(cuadros):
+        reloj.t += paso
+        resultados.append(ctrl.procesar_cuadro())
+    return resultados
+
+
+def test_sena_segura_queda_provisional_y_se_escribe_sola():
+    ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.9, 0.05)])
+    r = _avanzar(ctrl, reloj, 10)[-1]
+    assert r.pendiente.automatica and r.pendiente.opciones[0].letra == "Hola"
+    assert ctrl.buffer.texto == ""  # todavía no se escribe
+    _avanzar(ctrl, reloj, 90)  # 3 s después
+    assert ctrl.buffer.texto == "Hola" and ctrl.pendiente is None
+    assert [l for l, _ in ctrl.historial.letras_de_sesion(ctrl.sesion_id)] == ["Hola"]
+
+
+def test_movimiento_ajeno_no_escribe_nada():
+    """El defecto de la v1.0.0: «otra cosa» gana y no se muestra nada."""
+    ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.3, 0.7)])
+    r = _avanzar(ctrl, reloj, 10)[-1]
+    assert r.pendiente is None
+    _avanzar(ctrl, reloj, 300)
+    assert ctrl.buffer.texto == ""
+
+
+def test_sena_dudosa_es_sugerencia_y_solo_se_escribe_si_se_elige():
+    ctrl, reloj = _controlador(fines=[10, 300], salidas=[("Gracias", 0.18, 0.2), ("Gracias", 0.18, 0.2)])
+    r = _avanzar(ctrl, reloj, 10)[-1]
+    assert r.pendiente is not None and not r.pendiente.automatica
+    _avanzar(ctrl, reloj, 240)  # vence sin que nadie elija
+    assert ctrl.buffer.texto == "" and ctrl.pendiente is None
+    _avanzar(ctrl, reloj, 50)  # segunda vez: alguien elige la opción 2
+    assert ctrl.confirmar_pendiente(1) == "Chao"
+    assert ctrl.buffer.texto == "Chao"
+
+
+def test_corregir_y_descartar_la_provisional():
+    ctrl, reloj = _controlador(fines=[10, 40], salidas=[("Hola", 0.9, 0.0), ("No", 0.8, 0.0)])
+    _avanzar(ctrl, reloj, 10)
+    assert ctrl.confirmar_pendiente(2) == "Bien"  # la tercera opción
+    _avanzar(ctrl, reloj, 30)
+    ctrl.descartar_pendiente()
+    _avanzar(ctrl, reloj, 120)
+    assert ctrl.buffer.texto == "Bien"
+
+
+def test_empezar_otra_sena_acepta_la_provisional():
+    ctrl, reloj = _controlador(fines=[10, 30], salidas=[("Hola", 0.9, 0.0), ("Gracias", 0.9, 0.0)])
+    _avanzar(ctrl, reloj, 26)  # la segunda seña empieza en el cuadro 25, antes de los 2,5 s
+    assert ctrl.buffer.texto == "Hola"
+
+
+def test_detener_escribe_la_provisional_y_descarta_la_sugerencia():
+    ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.9, 0.0)])
+    _avanzar(ctrl, reloj, 10)
+    ctrl.detener()
+    assert ctrl.historial.listar_sesiones()[0].texto == "Hola"
 
 
 def test_misma_palabra_casi_seguida_se_escribe_una_vez():
-    # Seña partida en dos (cuadros 30 y 35) -> una sola; repetición real 60 cuadros después -> se escribe
-    ctrl = _controlador(fines=[30, 35, 95], salidas=[("Hola", 0.9), ("Hola", 0.9), ("Hola", 0.9)])
-    for _ in range(100):
-        ctrl.procesar_cuadro()
+    ctrl, reloj = _controlador(fines=[30, 35, 140], salidas=[("Hola", 0.9, 0.0)] * 3)
+    _avanzar(ctrl, reloj, 220)
     assert ctrl.buffer.texto == "Hola Hola"
+
+
+def test_modo_palabras_pide_imagen_panoramica():
+    ctrl, _ = _controlador(fines=[], salidas=[])
+    assert ctrl.captura.resolucion == (1280, 720)
+    from silva.controlador import MODO_LETRAS
+    ctrl.cambiar_modo(MODO_LETRAS)
+    assert ctrl.captura.resolucion == (640, 480)

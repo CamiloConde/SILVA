@@ -30,9 +30,10 @@ def _cargar_palabras():
     """El modo Palabras es opcional: si falta su modelo, la app funciona solo con letras."""
     try:
         clasificador = ClasificadorPalabras()
-        return DetectorCuerpo(), clasificador, clasificador.metadatos.get("umbral", 0.5)
+        umbrales = (clasificador.metadatos.get("umbral", 0.5), clasificador.metadatos.get("umbral_sugerencia", 0.12))
+        return DetectorCuerpo(), clasificador, umbrales
     except FileNotFoundError:
-        return None, None, 0.5
+        return None, None, (0.5, 0.12)
 
 
 def verificar(destino: Path, con_camara: bool) -> bool:
@@ -104,7 +105,7 @@ def main() -> None:
 
     try:
         # Orden de la Figura 3: primero se cargan los modelos, después (al presionar Iniciar) la cámara.
-        detector_cuerpo, clasificador_palabras, umbral_palabras = _cargar_palabras()
+        detector_cuerpo, clasificador_palabras, (umbral_palabras, umbral_sugerencia) = _cargar_palabras()
         controlador = ControladorSILVA(
             captura=CapturaVideo(),
             detector=DetectorManos(),
@@ -114,6 +115,7 @@ def main() -> None:
             detector_cuerpo=detector_cuerpo,
             clasificador_palabras=clasificador_palabras,
             umbral_palabras=umbral_palabras,
+            umbral_sugerencia=umbral_sugerencia,
         )
     except FileNotFoundError as error:
         aviso.close()
