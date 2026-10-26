@@ -10,7 +10,7 @@ Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bol�
 
 ## Descargar y usar (sin instalar nada)
 
-1. En [Releases](https://github.com/CamiloConde/SILVA/releases) descargue `SILVA-v1.2.0-windows.zip` (unos 260 MB).
+1. En [Releases](https://github.com/CamiloConde/SILVA/releases) descargue `SILVA-v1.2.0-windows.zip` (unos 280 MB).
 2. Descomprímalo completo y abra `SILVA\SILVA.exe`.
    - Si Windows muestra «Windows protegió su PC», elija *Más información → Ejecutar de todas formas*. Aparece porque el ejecutable no está firmado digitalmente.
 3. Presione **Iniciar** (o Enter).
