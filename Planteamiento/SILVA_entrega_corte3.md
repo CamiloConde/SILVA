@@ -361,6 +361,33 @@ El 26/10/2026 el equipo probó SILVA con la cámara y registró tres problemas:
 ![Figura 9](../docs/capturas/figura_9_correccion.png)
 *Nota.* Elaboración propia, con datos sintéticos. Tarjeta sobre el video (visible para quien signa) y panel lateral con las 3 opciones, Confirmar y Descartar.
 
+## 10.11 Versión 1.2: más personas en los datos y mejor seguimiento
+
+**Por qué.** La prueba con usuarios mostró que la mano "se pierde" durante los movimientos y que algunas señas no se reconocen. Se midieron tres cosas:
+1. **El seguimiento.** MediaPipe pierde la mano en el 12–15 % de los cuadros de cada seña, incluso en videos de calidad (PR-54).
+2. **Las letras con personas nuevas.** El modelo de letras, entrenado con una sola persona, acierta el 74 % con 70 personas nuevas (PR-50).
+3. **Las palabras en otro entorno.** El modelo de palabras acierta solo el 32 % con personas grabadas en otro entorno (PR-52).
+
+**Cambios:**
+- **Dos datasets colombianos nuevos**, ambos CC BY 4.0:
+  - **LSC70** (70 personas) para las letras.
+  - **LSC50** (5 personas, otro entorno) para las palabras.
+- **Umbral de detección de la mano** de 0,4 en modo Palabras.
+- **Mano aproximada** dibujada desde el esqueleto cuando la detección se pierde.
+- **Aviso de poca luz.**
+
+**Resultados:**
+
+| | v1.1 | v1.2 |
+|---|---|---|
+| Letras, exactitud con personas nuevas | 74,3 % | **88,5 %** |
+| Letras que la app escribe (acierto) | 34 % (95 %) | **69 % (98,4 %)** |
+| Palabras con personas de otro entorno | 32 % | **77,1 %** |
+| Palabras, exactitud general con personas nuevas | 85,1 % | 85,2 % |
+| Palabras falsas ante señas ajenas | 11,5 % | 9,1 % |
+
+**Decisión.** Se evaluó ampliar el vocabulario a 69 señas con las nuevas de LSC50, pero la exactitud general bajaba a 74,5 %, porque cada seña nueva tiene solo 5 personas. Queda como trabajo futuro: grabar más personas para esas señas. El detalle está en [docs/dataset.md](../docs/dataset.md).
+
 ## 11. Diagramas técnicos actualizados
 
 Los diagramas del segundo corte ([SILVA_diagramas_UMLv2.pdf](SILVA_diagramas_UMLv2.pdf)) siguen siendo válidos para el modo Deletreo. Estos los actualizan con los cambios C3 a C7. Están en notación Mermaid, que GitHub muestra como diagrama.
@@ -543,6 +570,8 @@ Breiman, L. (2001). Random forests. *Machine Learning, 45*(1), 5–32. https://d
 
 cchadowitz. (2026, 7 de mayo). *Mediapipe now includes undocumented telemetry* (Issue #6291) [Reporte de error]. GitHub. https://github.com/google-ai-edge/mediapipe/issues/6291
 
+Flórez-Sierra, Solórzano, Segura-Quijano et al. (2024). LSC50: Colombian Sign Language Video and Inertial Measurement dataset. *Scientific Data, 11*, 1347. Datos: https://figshare.com/articles/dataset/LSC50_Colombian_Sign_Language_Video_and_Inertial_Measurement_Dataset/27383016 [completar la lista completa de autores al citar en APA]
+
 Geurts, P., Ernst, D. y Wehenkel, L. (2006). Extremely randomized trees. *Machine Learning, 63*(1), 3–42. https://doi.org/10.1007/s10994-006-6226-1
 
 JuanPlazas. (2026). *deteccion_letras_senas: Detección de letras en Lengua de Señas Colombiana (LSC)* [Software y conjunto de datos]. GitHub. https://github.com/JuanPlazas/deteccion_letras_senas
@@ -554,6 +583,8 @@ Lugaresi, C., Tang, J., Nash, H., McClanahan, C., Uboweja, E., Hays, M., Zhang, 
 Mora-Zarate, J. E. (2025). *A dataset representing the movements that a person must perform to produce a sign* (Versión 4) [Conjunto de datos]. Science Data Bank. https://doi.org/10.57760/sciencedb.25639
 
 Mora-Zarate, J. E., Garzón-Castro, C. L. y Castellanos-Rivillas, J. A. (2025). LSC-54: A landmark-based dataset for Colombian sign language. *Data in Brief, 63*, Artículo 112145. https://doi.org/10.1016/j.dib.2025.112145
+
+Muñoz Galindez, J. A., Villota Coral, L. V. y Vargas-Cañas, R. (2024). *Speak in Colombian Sign Language: A Dynamic LSC70 Database* (Versión 2) [Conjunto de datos]. Mendeley Data. https://doi.org/10.17632/9ssyn8tff5.2
 
 Muñoz Galindez, J. A., Villota Coral, L. V. y Vargas Cañas, R. (2025). The dynamic Colombian sign language dataset for basic conversation LSC70. *Data in Brief, 58*, Artículo 111213. https://doi.org/10.1016/j.dib.2024.111213
 

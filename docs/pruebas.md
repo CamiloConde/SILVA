@@ -117,3 +117,14 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-47 | Funcional | Cambio de resolución en vivo con la cámara real (Deletreo ↔ Palabras) | 640×480 ↔ 1280×720 | Correcto (procesado en 640×360). La imagen salió negra: no se pudo medir el campo de visión | Parcial |
 | PR-48 | Precisión, punta a punta | 40 señas del vocabulario + 30 ajenas, personas 29 y 33 no vistas, reloj de 30 cuadros/s | Pocas palabras falsas | Ajenas escritas: 3 %. Vocabulario: 60 % solas y bien, 20 % recuperables con «¿Quiso decir?», 5 % mal (corregibles), 15 % ignoradas | Aprobada |
 | PR-49 | Usabilidad (manual) | Repetir la prueba del 26/10 con la versión 1.1 | Sin palabras «de la nada»; corrección entendible | | Pendiente |
+
+## Versión 1.2: más personas y seguimiento (26/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-50 | Precisión (letras) | Modelo v1.1 (1 persona) con las 70 personas de LSC70 | — (diagnóstico) | 74,3 %; escribe solo el 34 % | Defecto confirmado |
+| PR-51 | Precisión (letras) | Modelo v1.2 (+LSC70), validación cruzada por persona | Mejor que PR-50 | 88,5 %; escribe el 69 % con 98,4 % de acierto | Aprobada |
+| PR-52 | Precisión (palabras) | Modelo v1.1 con las 5 personas de LSC50 (otro entorno) | — (diagnóstico) | 32 % en las 14 señas comunes | Defecto confirmado |
+| PR-53 | Precisión (palabras) | Modelo v1.2 (+LSC50), personas de LSC50 no vistas | Mejor que PR-52 | 77,1 % (entre las 3 primeras: 91,8 %) | Aprobada |
+| PR-54 | Seguimiento | Detección de la mano en 4 512 cuadros de seña, umbral 0,6 vs 0,4 y media resolución | — | 84,9 % → 87,2 %; la resolución no influye | Medido |
+| PR-55 | Interfaz | Aviso de poca luz y mano aproximada (`test_interfaz.py`, `test_palabras.py`) | Aviso con imagen oscura; trazos de la mano perdida | Correcto | Aprobada |

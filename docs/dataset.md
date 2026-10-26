@@ -108,3 +108,49 @@ Se compararon cuatro clasificadores y tres conjuntos de características, siempr
 - Reconoce señas sueltas de un vocabulario cerrado de 33 expresiones, no frases libres con la gramática de la LSC.
 - Las confusiones más frecuentes son entre señas parecidas, como *Buenas noches* y *Buenos días*, o *Chao* y *Hola*.
 - Las personas del dataset estaban de pie, de frente y con fondo claro. Con una cámara de portátil y la persona sentada, deben verse los hombros y las manos; eso hay que probarlo con la cámara real (PR-27).
+
+
+---
+
+# Versión 1.2: más personas (LSC70 y LSC50)
+
+## Letras: LSC70 (70 personas)
+
+> Muñoz Galindez, J. A., Villota Coral, L. V. y Vargas-Cañas, R. (2024). *Speak in Colombian Sign Language: A Dynamic LSC70 Database* (V2) [Conjunto de datos]. Mendeley Data. https://doi.org/10.17632/9ssyn8tff5.2 — CC BY 4.0. Artículo: *Data in Brief, 58*, 111213.
+
+LSC70 trae 6 imágenes de 640×480 por seña, grabadas con celular, con luz y ropa variables, para 70 personas. `scripts/preparar_lsc70.py` toma las 17 letras estáticas y detecta la mano con el mismo modelo y la misma normalización de la app. Resultado: 7 036 muestras (104 imágenes sin mano detectada).
+
+| Modelo de letras | Exactitud con personas nuevas (LSC70) | Escribe (confianza ≥ 0,80) | Acierto de lo escrito |
+|---|---|---|---|
+| v1.1: solo JuanPlazas (1 persona) | 74,3 % | 34 % | 95 % |
+| **v1.2: + LSC70** (validación cruzada por persona) | **88,5 %** | **69 %** | **98,4 %** |
+
+Las letras más afectadas en la v1.1 eran X (25 %), E (50 %) e Y (57 %). El 99,9 % reportado antes medía secuencias nuevas de la misma única persona.
+
+## Palabras: LSC50 (5 personas, otro entorno)
+
+> Flórez-Sierra et al. (2024). LSC50: Colombian Sign Language Video and Inertial Measurement dataset. *Scientific Data, 11*, 1347. Datos: figshare, CC BY 4.0.
+
+LSC50 tiene 50 señas × 5 personas × 4 repeticiones, en video de cuerpo entero a 1920×1080, con puntos de MediaPipe Holistic ya extraídos. `scripts/preparar_lsc50.py` los convierte con la misma función de características de la app. 14 de sus señas coinciden con el vocabulario de SILVA.
+
+**Hallazgo:** con las personas de LSC50, el modelo de la v1.1 acertaba solo el **32 %** de esas 14 señas. Con personas de LSC-54 acertaba el 85 %. El modelo estaba sobreajustado al entorno de grabación de LSC-54. Algunas señas (*Permiso*, *Con gusto*) parecen hacerse distinto en LSC50, ya sea por variantes regionales o de estilo.
+
+| Variante | Señas | Exactitud con personas nuevas | Con personas de LSC50 | Escribe sola (acierto) |
+|---|---|---|---|---|
+| Sin LSC50 | 33 | 86,1 % | ~32 % | 69 % (96 %) |
+| **33 + LSC50 (elegida)** | 33 | 85,2 % | **77,1 %** (entre 3: 91,8 %) | 53 % (96,3 %) |
+| Ampliado con las 36 señas nuevas de LSC50 | 69 | 74,5 % | 61,5 % | 44 % (95,9 %) |
+
+Se eligió **33 + LSC50**. Las otras 36 señas de LSC50 se usan como «otra cosa» (rechazo). El vocabulario ampliado se descartó por ahora: con solo 5 personas por seña nueva, la exactitud general cae 11 puntos.
+
+## Seguimiento de la mano
+
+En 4 512 cuadros de seña de LSC-54, MediaPipe detecta la mano:
+- en el 84,9 % de los cuadros con un umbral de 0,6;
+- en el 87,2 % con un umbral de 0,4;
+- en una proporción casi igual con la imagen a la mitad de resolución, así que la resolución no es la causa.
+
+El 12–15 % restante se pierde por desenfoque, por la mano frente a la cara o por las manos cruzadas. En la v1.2:
+- **Umbral:** se usa 0,4 en modo Palabras, también al extraer LSC-54 para entrenar.
+- **Mano aproximada:** se dibuja la mano que estima el esqueleto cuando la detección se pierde.
+- **Aviso de poca luz:** con poca luz la cámara alarga la exposición y los movimientos salen borrosos.

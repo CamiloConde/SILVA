@@ -7,6 +7,8 @@ SILVA usa y redistribuye los siguientes datos y componentes. Cada uno conserva s
 | Recurso | Uso en SILVA | Licencia / condiciones | Fuente |
 |---|---|---|---|
 | Dataset de landmarks del alfabeto dactilológico de LSC (JuanPlazas, 2026) | Entrenamiento del modelo de letras (`modelos/modelo_senas.pkl`); muestras derivadas en `data/landmarks/externo_juanplazas.npz` | Uso educativo, académico, de investigación y desarrollo **citando la autoría** (`CERTIFICATE.md` del autor; sin archivo de licencia formal) | https://github.com/JuanPlazas/deteccion_letras_senas |
+| LSC70 (Muñoz Galindez, Villota Coral y Vargas-Cañas, 2024) | Modelo de letras (`modelo_senas.pkl`): 70 personas; puntos derivados en `data/landmarks/lsc70_letras.npz` | **CC BY 4.0** (con atribución) | https://doi.org/10.17632/9ssyn8tff5.2 |
+| LSC50 (Flórez-Sierra et al., 2024) | Modelo de palabras: 5 personas más, de otro entorno de grabación; puntos convertidos en `data/landmarks/lsc50_secuencias.npz` | **CC BY 4.0** (con atribución) | https://figshare.com/articles/dataset/LSC50_Colombian_Sign_Language_Video_and_Inertial_Measurement_Dataset/27383016 |
 | LSC-54 (Mora-Zarate, 2025) | Entrenamiento del modelo de palabras (`modelos/modelo_palabras.pkl`); landmarks extraídos de los videos en `data/landmarks/lsc54_secuencias.npz` | **CC BY-NC 4.0**: con atribución y **sin fines comerciales**. Los videos originales no se redistribuyen | https://doi.org/10.57760/sciencedb.25639 |
 
 Como el modelo de palabras se deriva de LSC-54, **SILVA no puede venderse ni usarse con fines comerciales** mientras incluya ese modelo.

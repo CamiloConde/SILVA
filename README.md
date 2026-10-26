@@ -1,6 +1,6 @@
 # SILVA
 
-**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.1.0
+**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.2.0
 
 SILVA es una aplicación de escritorio que traduce a texto, en tiempo real, señas de la Lengua de Señas Colombiana (LSC) captadas con una cámara web. También permite que la persona oyente responda por escrito. Todo se procesa en el equipo: no necesita internet ni envía video a ningún servidor.
 
@@ -10,7 +10,7 @@ Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bol�
 
 ## Descargar y usar (sin instalar nada)
 
-1. En [Releases](https://github.com/CamiloConde/SILVA/releases) descargue `SILVA-v1.1.0-windows.zip` (unos 230 MB).
+1. En [Releases](https://github.com/CamiloConde/SILVA/releases) descargue `SILVA-v1.2.0-windows.zip` (unos 260 MB).
 2. Descomprímalo completo y abra `SILVA\SILVA.exe`.
    - Si Windows muestra «Windows protegió su PC», elija *Más información → Ejecutar de todas formas*. Aparece porque el ejecutable no está firmado digitalmente.
 3. Presione **Iniciar** (o Enter).
@@ -29,16 +29,17 @@ Para comprobar una instalación: `SILVA.exe --verificar --camara` crea un inform
 
 Además:
 - Muestra la confianza de cada predicción.
-- Avisa cuando no detecta la mano o a la persona.
+- Avisa cuando no detecta la mano o a la persona, y cuando hay **poca luz** (con poca luz los movimientos salen borrosos y se pierde la mano).
+- Si MediaPipe pierde una mano a mitad de la seña, la dibuja en su posición aproximada (círculos huecos) usando el esqueleto del cuerpo.
 - En modo Palabras, la palabra reconocida aparece primero como **provisional** (2,5 s) con sus 3 opciones más probables. Se puede confirmar (Espacio), cambiar (1, 2, 3) o descartar (X); si nadie hace nada, se escribe sola.
 - Si la seña es dudosa, muestra **«¿Quiso decir…?»** con 3 opciones y no escribe nada salvo que alguien elija. Los movimientos que no son una de las 33 señas se ignoran.
 - Guarda cada sesión y cada respuesta en un historial local.
 
 **Precisión:**
-- **Letras:** 99,9 % en secuencias nuevas, pero todas de la misma persona del dataset, así que es una cifra optimista.
-- **Palabras:** 85,1 % con personas que el modelo nunca vio (la correcta está entre las 3 primeras opciones el 95,5 %).
-  - La app escribe sola el 67 % de las señas, con 96 % de acierto, y otro 21 % lo ofrece como «¿Quiso decir…?».
-  - Ante señas que no son del vocabulario escribe una palabra a lo sumo el 11,5 % de las veces (versión 1.0.0: 81 %), y queda provisional.
+- **Letras:** **88,5 % con personas que el modelo nunca vio** (70 personas de LSC70); con confianza ≥ 0,80 escribe el 69 % de las señas y acierta el 98,4 %. El modelo de la versión 1.1, entrenado con una sola persona, daba 74 % con personas nuevas.
+- **Palabras:** 85,2 % con personas que el modelo nunca vio, y **77,1 % con personas grabadas en otro entorno** (LSC50; la versión 1.1 daba 32 %).
+  - La app escribe sola el 53 % de las señas, con 96 % de acierto, y otro 20 % lo ofrece como «¿Quiso decir…?» (la correcta está entre las 3 opciones el 97 % de las veces).
+  - Ante señas que no son del vocabulario escribe una palabra el 9 % de las veces (versión 1.0.0: 81 %), y queda provisional.
 
 El detalle está en [docs/metricas_modelo.md](docs/metricas_modelo.md) y [docs/metricas_palabras.md](docs/metricas_palabras.md).
 
@@ -91,7 +92,7 @@ Los modelos ya vienen en `modelos/`, así que después de instalar la app funcio
 python -m pytest -v
 ```
 
-Son 60 pruebas automáticas:
+Son 63 pruebas automáticas:
 - Regla de confirmación de letras y normalización de puntos.
 - Detectores reales de MediaPipe y los dos clasificadores.
 - Segmentación de señas con movimiento.
@@ -112,11 +113,11 @@ python scripts/construir_ejecutable.py
 El script hace tres cosas:
 1. Empaqueta con PyInstaller ([empaquetado/silva.spec](empaquetado/silva.spec)).
 2. Verifica que el ejecutable cargue todos los modelos por sí solo.
-3. Genera `dist/SILVA-v1.1.0-windows.zip`, que es el archivo que se sube a *Releases*.
+3. Genera `dist/SILVA-v1.2.0-windows.zip`, que es el archivo que se sube a *Releases*.
 
 Pasos para publicar:
 1. En GitHub, entre a **Releases** y luego a **Draft a new release**.
-2. Cree la etiqueta `v1.1.0`.
+2. Cree la etiqueta `v1.2.0`.
 3. Adjunte el `.zip`.
 4. Publique con **Publish release**.
 
@@ -126,13 +127,14 @@ Pasos para publicar:
 
 ```bash
 python scripts/preparar_dataset.py
+python scripts/preparar_lsc70.py
 python scripts/capturar_dataset.py --persona camilo
 python scripts/entrenar_modelo.py
 ```
 
-`preparar_dataset.py` descarga el dataset externo de LSC. `capturar_dataset.py` es opcional (y recomendado): sirve para grabar muestras propias, una vez por cada integrante.
+`preparar_dataset.py` descarga el dataset de una persona de JuanPlazas. `preparar_lsc70.py` extrae las letras de LSC70 (70 personas; requiere `LSC70.zip` de [Mendeley Data](https://doi.org/10.17632/9ssyn8tff5.2) en `data/externo/lsc70/`). `capturar_dataset.py` es opcional: sirve para grabar muestras propias.
 
-**Palabras:** `data/landmarks/lsc54_secuencias.npz` ya trae los puntos extraídos, así que basta con:
+**Palabras:** `data/landmarks/lsc54_secuencias.npz` y `lsc50_secuencias.npz` ya traen los puntos extraídos, así que basta con:
 
 ```bash
 python scripts/entrenar_palabras.py
@@ -182,7 +184,7 @@ SILVA/
 
 ## Créditos y licencias
 
-- **Datos:** JuanPlazas (2026), dataset de letras de LSC (uso académico citando la autoría), y Mora-Zarate (2025), LSC-54 (**CC BY-NC 4.0**). Como el modelo de palabras se deriva de LSC-54, **SILVA no puede usarse con fines comerciales**.
+- **Datos:** JuanPlazas (2026), letras de LSC (uso académico citando la autoría); Muñoz Galindez et al. (2024), LSC70 (CC BY 4.0); Mora-Zarate (2025), LSC-54 (**CC BY-NC 4.0**); y Flórez-Sierra et al. (2024), LSC50 (CC BY 4.0). Como el modelo de palabras se deriva de LSC-54, **SILVA no puede usarse con fines comerciales**.
 - **Software:** MediaPipe (Apache 2.0), PySide6/Qt (LGPL v3), OpenCV (Apache 2.0), scikit-learn y NumPy (BSD).
 - El detalle está en [TERCEROS.md](TERCEROS.md).
 - El equipo aún no ha definido la licencia de su propio código.
