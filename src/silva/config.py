@@ -33,6 +33,14 @@ NUM_CARACTERISTICAS = NUM_LANDMARKS * 2  # (x, y) por landmark
 # Detección de la mano
 CONFIANZA_DETECCION = 0.6
 CONFIANZA_SEGUIMIENTO = 0.6
+# Modo Palabras: con la mano en movimiento (desenfoque, cerca de la cara) MediaPipe la pierde a
+# menudo. Medido en 4 512 cuadros de seña de LSC-54: con 0,6 se detecta en el 84,9 %, con 0,4 en
+# el 87,2 % (la resolución no influye). Se usa 0,4 también al extraer LSC-54 para entrenar.
+CONFIANZA_MANOS_PALABRAS = 0.4
+
+# Poca luz: la cámara alarga la exposición, los movimientos salen borrosos y se pierde la mano.
+# Brillo medio de la imagen (0-255) por debajo del cual se avisa.
+BRILLO_MINIMO = 55
 
 # Regla de confirmación (RF-04, Figura 4 del modelado UML)
 UMBRAL_CONFIANZA = 0.80

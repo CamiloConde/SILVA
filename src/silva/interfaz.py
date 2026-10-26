@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from silva import __version__, config
+
+AVISO_POCA_LUZ = "💡  Poca luz: los movimientos salen borrosos y se pierde la mano. Encienda una luz de frente"
 from silva.captura_video import CamaraNoDisponibleError
 from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, PalabraPendiente, ResultadoCuadro
 from silva.cuerpo import dibujar_cuerpo
@@ -838,7 +840,8 @@ class VentanaPrincipal(QWidget):
     def _pintar_letras(self, r: ResultadoCuadro) -> None:
         self.video.poner_grabando(False)
         if r.prediccion is None:
-            self.video.poner_banda("✋  No se detecta la mano")  # RF-06
+            # RF-06; con poca luz se dice la causa probable
+            self.video.poner_banda(AVISO_POCA_LUZ if r.brillo < config.BRILLO_MINIMO else "✋  No se detecta la mano")
             self._poner_letra("–", dudosa=True)
             self._poner_confianza(None)
             self._resaltar(None)
@@ -859,7 +862,9 @@ class VentanaPrincipal(QWidget):
         if r.letra_confirmada is not None:  # escrita sola al vencer el plazo o al empezar otra seña
             self._confirmar(r.letra_confirmada, self.ctrl.ultima_confianza or 0.0, "Última palabra")
         self._mostrar_pendiente(r.pendiente, r.ahora)
-        if r.cuerpo.pose is None:
+        if r.brillo < config.BRILLO_MINIMO:
+            self.video.poner_banda(AVISO_POCA_LUZ)
+        elif r.cuerpo.pose is None:
             self.video.poner_banda("🧍  Colóquese frente a la cámara: deben verse los hombros y las manos")
         elif _mano_en_borde(r.cuerpo):
             self.video.poner_banda("↔  Aléjese un poco: una mano se sale del cuadro")

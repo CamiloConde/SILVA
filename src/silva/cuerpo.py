@@ -124,9 +124,9 @@ class DetectorCuerpo:
             base_options=BaseOptions(model_asset_path=str(ruta_manos)),
             running_mode=vision.RunningMode.VIDEO,
             num_hands=2,
-            min_hand_detection_confidence=config.CONFIANZA_DETECCION,
-            min_hand_presence_confidence=config.CONFIANZA_DETECCION,
-            min_tracking_confidence=config.CONFIANZA_SEGUIMIENTO,
+            min_hand_detection_confidence=config.CONFIANZA_MANOS_PALABRAS,
+            min_hand_presence_confidence=config.CONFIANZA_MANOS_PALABRAS,
+            min_tracking_confidence=config.CONFIANZA_MANOS_PALABRAS,
         ))
         self._pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(ruta_pose)),
@@ -154,6 +154,21 @@ class DetectorCuerpo:
 
 
 POSE_CONEXIONES = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 24), (23, 24)]
+# Puntos de la mano que también estima la pose: muñeca, meñique, índice y pulgar (izq./der. de la persona)
+MANO_POSE_IZQ = (15, 17, 19, 21)
+MANO_POSE_DER = (16, 18, 20, 22)
+
+
+def _dibujar_mano_aproximada(cuadro_bgr: np.ndarray, puntos: list[tuple[int, int]], color) -> None:
+    alto, ancho = cuadro_bgr.shape[:2]
+    if not all(-ancho < x < 2 * ancho and -alto < y < 2 * alto for x, y in puntos):
+        return
+    muneca, menique, indice, pulgar = puntos
+    for destino in (menique, indice, pulgar):
+        cv2.line(cuadro_bgr, muneca, destino, (150, 150, 150), 1, cv2.LINE_AA)
+    cv2.line(cuadro_bgr, menique, indice, (150, 150, 150), 1, cv2.LINE_AA)
+    for q in puntos:
+        cv2.circle(cuadro_bgr, q, 4, color, 1, cv2.LINE_AA)  # círculos huecos = posición aproximada
 
 
 def dibujar_cuerpo(cuadro_bgr: np.ndarray, c: CuadroCuerpo) -> None:
@@ -168,8 +183,13 @@ def dibujar_cuerpo(cuadro_bgr: np.ndarray, c: CuadroCuerpo) -> None:
     if c.pose is not None:
         for a, b in POSE_CONEXIONES:
             cv2.line(cuadro_bgr, px(c.pose[a]), px(c.pose[b]), (200, 160, 90), 2, cv2.LINE_AA)
-    for mano, color in ((c.mano_izquierda, (255, 140, 40)), (c.mano_derecha, (90, 120, 255))):
+    for mano, color, puntos_pose in ((c.mano_izquierda, (255, 140, 40), MANO_POSE_IZQ),
+                                     (c.mano_derecha, (90, 120, 255), MANO_POSE_DER)):
         if mano is None:
+            # MediaPipe perdió la mano (movimiento rápido, desenfoque): se dibuja la mano aproximada
+            # que da el esqueleto del cuerpo, para que el seguimiento no "desaparezca" en pantalla.
+            if c.pose is not None:
+                _dibujar_mano_aproximada(cuadro_bgr, [px(c.pose[i]) for i in puntos_pose], color)
             continue
         puntos = [px(lm) for lm in mano]
         for a, b in CONEXIONES_MANO:

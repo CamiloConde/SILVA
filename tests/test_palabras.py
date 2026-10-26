@@ -259,3 +259,20 @@ def test_modo_palabras_pide_imagen_panoramica():
     from silva.controlador import MODO_LETRAS
     ctrl.cambiar_modo(MODO_LETRAS)
     assert ctrl.captura.resolucion == (640, 480)
+
+
+def test_mano_perdida_se_dibuja_aproximada_desde_la_pose():
+    """Cuando MediaPipe pierde la mano, se dibuja la que estima el esqueleto (no desaparece en pantalla)."""
+    from silva.cuerpo import dibujar_cuerpo
+    pose = pose_base()
+    pose[17], pose[19], pose[21] = Landmark(0.66, 0.95), Landmark(0.62, 0.97), Landmark(0.58, 0.93)
+    sin_mano = np.zeros((360, 640, 3), np.uint8)
+    dibujar_cuerpo(sin_mano, CuadroCuerpo(pose, None, None, 16 / 9))
+    zona = sin_mano[int(0.85 * 360):, int(0.55 * 640):int(0.7 * 640)]
+    assert zona.any()  # hay trazos donde está la mano izquierda aproximada
+
+
+def test_brillo_del_cuadro():
+    from silva.controlador import _brillo
+    assert _brillo(np.zeros((480, 640, 3), np.uint8)) == 0
+    assert _brillo(np.full((480, 640, 3), 200, np.uint8)) == 200

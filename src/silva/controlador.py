@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+import cv2
 import numpy as np
 
 from silva.buffer_texto import BufferTexto
@@ -61,6 +62,7 @@ class ResultadoCuadro:
     grabando_sena: bool = False  # modo Palabras: hay una seña en curso
     pendiente: PalabraPendiente | None = None  # modo Palabras: palabra por confirmar o sugerencia
     ahora: float = 0.0
+    brillo: float = 128.0  # brillo medio de la imagen (0-255): con poca luz se pierde el seguimiento
 
     @property
     def mano_detectada(self) -> bool:
@@ -159,6 +161,7 @@ class ControladorSILVA:
             texto=self.buffer.texto,
             progreso=self.buffer.progreso,
             fps=self._medir_fps(),
+            brillo=_brillo(cuadro),
         )
 
     def _procesar_palabras(self, cuadro: np.ndarray, marca_ms: int) -> ResultadoCuadro:
@@ -202,6 +205,7 @@ class ControladorSILVA:
             grabando_sena=estado.grabando,
             pendiente=self.pendiente,
             ahora=ahora,
+            brillo=_brillo(cuadro),
         )
 
     # ---------------------------------------------------- corrección (RF-13)
@@ -261,3 +265,9 @@ class ControladorSILVA:
                 self._fps = instantaneo if self._fps == 0 else 0.9 * self._fps + 0.1 * instantaneo
         self._t_anterior = ahora
         return self._fps
+
+
+def _brillo(cuadro: np.ndarray) -> float:
+    """Brillo medio (0-255) sobre una versión pequeña del cuadro: menos de 1 ms."""
+    pequeno = cv2.resize(cuadro, (64, 48), interpolation=cv2.INTER_AREA)
+    return float(pequeno.mean())

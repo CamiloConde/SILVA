@@ -211,3 +211,18 @@ def test_selector_de_camara(app):
     ventana.combo_camara.setCurrentIndex(2)
     assert ctrl.captura.indice == 2
     ventana.close()
+
+
+def test_aviso_de_poca_luz(app):
+    """Con imagen oscura la ventana dice la causa probable de que se pierda la mano."""
+    from silva.controlador import ResultadoCuadro
+    from silva.interfaz import AVISO_POCA_LUZ
+    import numpy as np
+    ventana, ctrl, _ = crear(app)
+    r = ResultadoCuadro(np.zeros((480, 640, 3), np.uint8), None, None, None, "", 0, 30, brillo=10)
+    ventana._pintar_letras(r)
+    assert ventana.video._banda == AVISO_POCA_LUZ
+    r.brillo = 120
+    ventana._pintar_letras(r)
+    assert ventana.video._banda == "✋  No se detecta la mano"
+    ventana.close()
