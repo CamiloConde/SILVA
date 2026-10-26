@@ -73,7 +73,25 @@ Los números del 1 al 10 son configuraciones de mano casi estáticas que se conf
 2. **Relleno:** los cuadros donde la mano se perdió entre dos detecciones se interpolan.
 3. **Vector fijo:** la seña se remuestrea a 20 cuadros, para que no importe si se hizo rápido o lento. Se toman las posiciones, las velocidades y la **forma de cada mano** respecto a su muñeca, en total 5 580 valores.
 4. **Clasificación:** Extra Trees de 400 árboles. El entrenamiento se aumenta con versiones espejadas, que simulan a personas zurdas.
-5. **Umbral:** el entrenamiento elige el menor umbral con el que lo escrito acierta al menos el 90 %. Hoy es 0,20.
+5. **Rechazo y umbral (versión 1.1):**
+   - El modelo tiene una clase extra, **«otra cosa»**, aprendida con las señas de colores y números de LSC-54.
+   - Una seña se escribe (provisional) si su probabilidad supera el umbral **y** a «otra cosa».
+   - Si es dudosa, se ofrece como «¿Quiso decir…?».
+   - El umbral se elige para que lo escrito solo acierte ≥ 95 % y escriba a lo sumo un 15 % de señas ajenas; hoy es 0,25.
+   - Ver [metricas_palabras.md](metricas_palabras.md).
+
+## Rechazo de movimientos ajenos (versión 1.1)
+
+El modelo 1.0.0 solo conocía las 33 señas y siempre elegía una: con las 1 671 señas ajenas de LSC-54 escribía una palabra en el **81 %** de los casos («Chao», «Bien», «No», «Hola»…).
+
+Para que la evaluación sea honesta, se entrena con una categoría como «otra cosa» y se mide con la otra, nunca vista. Resultados con umbral 0,20:
+
+| «Otra cosa» de entrenamiento | Se prueba con | Palabras falsas | Señas reales escritas (acierto) |
+|---|---|---|---|
+| Números | Colores | 23 % | 72 % (94 %) |
+| Colores | Números | 4 % | 68 % (94 %) |
+
+El modelo final aprende con ambas categorías. Ante gestos cotidianos (rascarse, acomodarse el pelo) no hay datos para medirlo; grabar algunos y agregarlos como «otra cosa» es la mejora más directa.
 
 ## Por qué Extra Trees
 

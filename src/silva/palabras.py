@@ -22,9 +22,9 @@ from silva.cuerpo import N_MANO, N_POSE
 from silva.modelo import Prediccion
 
 LONGITUD_FIJA = 20  # cuadros tras remuestrear
-MIN_ACTIVOS = 6  # cuadros activos mínimos para considerar que hubo una seña (~0,2 s)
+MIN_ACTIVOS = 8  # cuadros activos mínimos para considerar que hubo una seña (~0,27 s): evita palabras por gestos rápidos
 MAX_CUADROS = 120  # ~4 s: si no termina, se clasifica igual
-CUADROS_FIN = 8  # cuadros seguidos en reposo (~0,27 s) para dar la seña por terminada
+CUADROS_FIN = 10  # cuadros seguidos en reposo (~0,33 s) para dar la seña por terminada
 MARGEN = 2  # cuadros de reposo que se conservan antes y después
 
 # Una mano está "activa" si la muñeca está por encima de esta altura (en anchos de
@@ -133,6 +133,21 @@ def vector_secuencia(cuadros: np.ndarray) -> np.ndarray:
     return np.concatenate([r.ravel(), np.diff(r, axis=0).ravel(), forma_manos(r).ravel()]).astype(np.float32)
 
 
+OTRA = "__otra__"  # clase de rechazo: movimientos que no son ninguna de las señas conocidas
+
+
+@dataclass(frozen=True)
+class Evaluacion:
+    """Resultado de clasificar una seña: opciones ordenadas y probabilidad de «no es una seña conocida»."""
+
+    opciones: list[Prediccion]  # señas conocidas, de la más a la menos probable
+    prob_otra: float
+
+    @property
+    def mejor(self) -> Prediccion:
+        return self.opciones[0]
+
+
 class ClasificadorPalabras:
     """Carga modelo_palabras.pkl (generado por scripts/entrenar_palabras.py)."""
 
@@ -143,15 +158,26 @@ class ClasificadorPalabras:
             )
         paquete = joblib.load(ruta)
         self._modelo = paquete["modelo"]
-        self.palabras: list[str] = list(self._modelo.classes_)
+        self._clases: list[str] = list(self._modelo.classes_)
+        self.palabras: list[str] = [c for c in self._clases if c != OTRA]
         self.nombres: dict[str, str] = paquete.get("nombres", {})
         self.metadatos: dict = paquete.get("metadatos", {})
 
-    def predecir(self, cuadros: np.ndarray) -> Prediccion:
+    def evaluar(self, cuadros: np.ndarray) -> Evaluacion:
         proba = self._modelo.predict_proba(vector_secuencia(cuadros).reshape(1, -1))[0]
-        i = int(np.argmax(proba))
-        clave = self.palabras[i]
-        return Prediccion(self.nombres.get(clave, clave), float(proba[i]))
+        prob_otra = 0.0
+        opciones = []
+        for clave, p in zip(self._clases, proba):
+            if clave == OTRA:
+                prob_otra = float(p)
+            else:
+                opciones.append(Prediccion(self.nombres.get(clave, clave), float(p)))
+        opciones.sort(key=lambda o: o.confianza, reverse=True)
+        return Evaluacion(opciones, prob_otra)
+
+    def predecir(self, cuadros: np.ndarray) -> Prediccion:
+        """La seña conocida más probable (sin considerar el rechazo)."""
+        return self.evaluar(cuadros).mejor
 
 
 @dataclass
