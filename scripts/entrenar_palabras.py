@@ -33,6 +33,7 @@ from silva.cuerpo import espejar
 from silva.palabras import OTRA, recortar_activo, vector_secuencia
 
 ORIGEN = config.DIR_LANDMARKS / "lsc54_secuencias.npz"
+ORIGEN_LSC50 = config.DIR_LANDMARKS / "lsc50_secuencias.npz"  # scripts/preparar_lsc50.py (opcional)
 RUTA_REPORTE = config.RAIZ_PROYECTO / "docs" / "metricas_palabras.md"
 SEMILLA = 42
 VOCABULARIO = "Cordialidad"
@@ -101,22 +102,43 @@ def main() -> None:
     parser.add_argument("--negativas", default="Colores,Numeros",
                         help="categorías de LSC-54 que se usan como «otra cosa» (vacío = sin rechazo)")
     parser.add_argument("--pliegues", type=int, default=6)
+    parser.add_argument("--vocabulario", choices=["cortesia", "ampliado"], default="cortesia",
+                        help="cortesia: las 33 de LSC-54 (las demás de LSC50 son «otra cosa»); "
+                             "ampliado: además las señas de LSC50 que no están en LSC-54")
+    parser.add_argument("--sin-lsc50", action="store_true", help="no usar LSC50 aunque esté disponible")
     args = parser.parse_args()
 
     d = np.load(ORIGEN, allow_pickle=True)
-    cat = np.array([_norm_categoria(c) for c in d["categorias"]])
+    secuencias = list(d["secuencias"])
+    etiquetas_orig = list(d["etiquetas"].astype(object))
+    firmantes = list(d["firmantes"].astype(str))
+    cat = [_norm_categoria(c) for c in d["categorias"]]
+    vocabulario = set(NOMBRES)  # las 33 de LSC-54
+    if ORIGEN_LSC50.exists() and not args.sin_lsc50:  # LSC50: 5 personas más, de otro entorno de grabación
+        d50 = np.load(ORIGEN_LSC50, allow_pickle=True)
+        for s50, e50, f50 in zip(d50["secuencias"], d50["etiquetas"], d50["firmantes"]):
+            secuencias.append(s50)
+            etiquetas_orig.append(str(e50))
+            firmantes.append(str(f50))
+            en_vocab = str(e50) in vocabulario or args.vocabulario == "ampliado"
+            cat.append(VOCABULARIO if en_vocab else "LSC50-otras")
+    secuencias = np.array(secuencias, dtype=object)
+    etiquetas_orig, firmantes, cat = np.array(etiquetas_orig, dtype=object), np.array(firmantes), np.array(cat)
     negativas = {_norm_categoria(c.strip()) for c in args.negativas.split(",") if c.strip()}
+    if (cat == "LSC50-otras").any():
+        negativas.add("LSC50-otras")
     m = (cat == VOCABULARIO) | np.isin(cat, list(negativas))
-    secuencias, firmantes, cat = d["secuencias"][m], d["firmantes"][m], cat[m]
-    etiquetas = np.where(cat == VOCABULARIO, d["etiquetas"][m].astype(object), OTRA)
+    secuencias, firmantes, cat, etiquetas_orig = secuencias[m], firmantes[m], cat[m], etiquetas_orig[m]
+    etiquetas = np.where(cat == VOCABULARIO, etiquetas_orig, OTRA)
     es_pos = cat == VOCABULARIO
-    print(f"{es_pos.sum()} videos de las 33 señas + {(~es_pos).sum()} de «otra cosa» ({', '.join(sorted(negativas))}), "
+    n_vocab = len(set(etiquetas[es_pos]))
+    print(f"{es_pos.sum()} videos de {n_vocab} señas + {(~es_pos).sum()} de «otra cosa» ({', '.join(sorted(negativas))}), "
           f"{len(set(firmantes))} firmantes")
 
     # Evaluación honesta: personas no vistas (GroupKFold por firmante) Y movimientos ajenos de una
     # categoría que el modelo no vio como «otra cosa» (se entrena con una categoría negativa y se
     # prueba con la otra). El espejo solo se agrega al entrenamiento.
-    probas, reales, clases_ref = [], [], None
+    probas, reales, firmantes_te, clases_ref = [], [], [], None
     t0 = time.time()
     lista_firmantes = np.unique(firmantes)
     rondas = [(n, sorted(negativas - {n})) for n in sorted(negativas)] if len(negativas) > 1 else [(None, sorted(negativas))]
@@ -129,15 +151,19 @@ def main() -> None:
             clases_ref = modelo.classes_ if clases_ref is None else clases_ref
             # Las señas reales se cuentan una sola vez (en la primera ronda)
             m_te = ~en_tr & ((es_pos if prueba_neg == rondas[0][0] else False) | (cat == prueba_neg))
-            Xte, yte, _, _ = construir(secuencias[m_te], etiquetas[m_te], firmantes[m_te], con_espejo=False)
+            Xte, yte, gte, _ = construir(secuencias[m_te], etiquetas[m_te], firmantes[m_te], con_espejo=False)
+            if len(Xte) == 0:  # p. ej. un pliegue sin ninguna de las 5 personas de LSC50
+                continue
             p = modelo.predict_proba(Xte)
             alineada = np.zeros((len(p), len(clases_ref)))
             for j, c in enumerate(modelo.classes_):
                 alineada[:, list(clases_ref).index(c)] = p[:, j]
             probas.append(alineada)
             reales += list(yte)
+            firmantes_te += list(gte)
         print(f"  ronda: «otra cosa» de prueba = {prueba_neg} (entrenada con {', '.join(entreno_neg)})")
     proba, real = np.vstack(probas), np.array(reales, dtype=object)
+    firmantes_te = np.array(firmantes_te)
     pos = real != OTRA
 
     # Curva de umbrales y elección
@@ -159,8 +185,13 @@ def main() -> None:
     top3_ok = np.array([r in t for r, t in zip(real[pos], top3[pos])]).mean()
     sug_pos = sugiere & pos
     sug_util = np.array([r in t for r, t in zip(real[sug_pos], top3[sug_pos])]).mean() if sug_pos.any() else 0.0
-    print(f"Exactitud (mejor de las 33) con firmantes no vistos: {top1:.3f} · entre las 3 primeras: {top3_ok:.3f}"
+    print(f"Exactitud (mejor de las {n_vocab}) con firmantes no vistos: {top1:.3f} · entre las 3 primeras: {top3_ok:.3f}"
           f"  ({time.time() - t0:.0f} s)")
+    de50 = pos & np.char.startswith(firmantes_te.astype(str), "L50")
+    top1_50 = (mejor[de50] == real[de50]).mean() if de50.any() else float("nan")
+    top3_50 = np.array([r in t for r, t in zip(real[de50], top3[de50])]).mean() if de50.any() else float("nan")
+    if de50.any():
+        print(f"  …solo personas de LSC50 (otro entorno de grabación): mejor {top1_50:.3f} · entre 3: {top3_50:.3f}")
     sug_ruido = (sugiere & ~pos).sum() / max((~pos).sum(), 1)
     print(f"Sugerencias: {sugiere[pos].mean():.0%} de las señas reales (correcta entre las 3: {sug_util:.0%}); "
           f"por ruido: {sug_ruido:.0%}")
@@ -179,6 +210,8 @@ def main() -> None:
     nombres = {c: nombre_visible(c) for c in final.classes_ if c != OTRA}
     metadatos = {
         "fecha": datetime.now().isoformat(timespec="seconds"),
+        "vocabulario": args.vocabulario,
+        "exactitud_lsc50": float(top1_50),
         "negativas": sorted(negativas),
         "firmantes": int(len(set(firmantes))),
         "exactitud_firmantes_no_vistos": float(top1),
@@ -199,8 +232,8 @@ def main() -> None:
 
 Generado por `scripts/entrenar_palabras.py` el {metadatos['fecha']}.
 
-- Dataset: LSC-54 (Mora-Zarate, 2025). Vocabulario: las 33 expresiones de cortesía
-  ({', '.join(nombres.values())}).
+- Datasets: LSC-54 (Mora-Zarate, 2025) y, si está, LSC50 (Flórez-Sierra et al., 2024).
+  Vocabulario ({len(nombres)} señas): {', '.join(sorted(nombres.values()))}.
 - Clase de rechazo «otra cosa»: señas de LSC-54 fuera del vocabulario ({', '.join(sorted(negativas))}),
   para que la app no escriba palabras ante cualquier movimiento.
 - {len(secuencias)} videos de {len(set(firmantes))} firmantes; sin tramo activo detectado (descartados): {descartadas}
@@ -213,7 +246,8 @@ Generado por `scripts/entrenar_palabras.py` el {metadatos['fecha']}.
 
 | Métrica | Valor |
 |---|---|
-| Exactitud (mejor de las 33 opciones) | {top1:.1%} |
+| Exactitud (mejor de las {n_vocab} opciones) | {top1:.1%} |
+| …solo con las personas de LSC50 (otro entorno de grabación) | {top1_50:.1%} (entre las 3 primeras: {top3_50:.1%}) |
 | La seña correcta está entre las 3 primeras opciones | {top3_ok:.1%} |
 | Umbral de confianza elegido | {umbral:.2f} |
 | Señas reales que la app escribe sola | {elegido['cobertura']:.1%} |
@@ -241,7 +275,7 @@ Las falsas quedan provisionales: se pueden descartar con X antes de que se escri
 |---|---|---|---|
 {tabla}
 
-<details><summary>Reporte por seña (mejor de las 33 opciones)</summary>
+<details><summary>Reporte por seña (mejor opción)</summary>
 
 ```
 {reporte}
