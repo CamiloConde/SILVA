@@ -31,6 +31,8 @@ La plantilla permite ajustar el alcance «siempre que el cambio sea documentado 
 | C5 | **La interfaz pasó de Tkinter a PySide6 (Qt), con el procesamiento de video en un hilo aparte** | Con Tkinter, el video y la detección compartían un solo hilo y la ventana se trababa. Qt permite el paralelismo que ya describía la Figura 6 | `VentanaPrincipal` se reimplementó y se agregó `TrabajadorVideo`. El controlador no cambió | Aplicado |
 | C6 | **MediaPipe queda fijo en la versión 0.10.21** | Las versiones que publica Google desde la 0.10.22 envían estadísticas de uso a `play.googleapis.com` sin forma de desactivarlo (cchadowitz, 2026). Se detectó en las pruebas con la cámara, e incumplía RNF-01 | Ninguno | Aplicado |
 | C7 | **Distribución como ejecutable de Windows** (antes: «aplicación de escritorio en Python») | Para usar SILVA no debe hacer falta instalar Python (RNF-06) | Diagrama de despliegue actualizado (Figura 12) | Aplicado |
+| C8 | **Versión 1.1: rechazo de movimientos ajenos y corrección por el usuario** (RF-11 reformulado, RF-13) | Hallazgo de la prueba con usuarios del 26/10/2026: el modo Palabras «soltaba palabras» ante cualquier movimiento. Medido: el **81 %** de las señas ajenas al vocabulario terminaban escritas como una palabra | `ClasificadorPalabras` aprende la clase «otra cosa»; `ControladorSILVA` gana el estado `PalabraPendiente`; el panel de corrección se agrega a `VentanaPrincipal` (sección 10.10) | Aplicado |
+| C9 | **Versión 1.1: cámara** (RF-14): selector de cámara (para usar el celular como cámara web), imagen panorámica en modo Palabras y aviso cuando la mano sale del cuadro | Hallazgo de la misma prueba: con la cámara del portátil hay que alejarse mucho y las señas amplias no caben en el cuadro | `CapturaVideo` admite índice y resolución por modo | Aplicado |
 
 Siguen **fuera de alcance**:
 - Traducir frases libres con la gramática de la LSC.
@@ -47,14 +49,18 @@ Los requerimientos RF-01 a RF-08 y RNF-01 a RNF-05 del segundo corte se mantiene
 |---|---|---|---|---|
 | RF-09 | El sistema debe permitir que la persona oyente escriba una respuesta y mostrarla en grande para la persona sorda | Cambio C4 | Importante | La respuesta ocupa el área del video con letra legible a distancia, se cierra con un clic o con Esc, y queda en el historial |
 | RF-10 | El sistema debe reconocer 33 expresiones de cortesía con movimiento (modo Palabras) | Cambio C3 | Importante | Con personas que el modelo no vio, al menos 80 % de exactitud en la evaluación por persona |
-| RF-11 | Si una seña es dudosa, el sistema no debe escribirla y debe pedir que se repita | Necesidad detectada al construir RF-10 | Importante | Las señas con confianza bajo el umbral muestran «No se reconoció la seña… Repítala» y no se agregan al texto |
+| RF-11 | Si una seña es dudosa o no pertenece al vocabulario, el sistema no debe escribirla por su cuenta | Necesidad detectada al construir RF-10; reformulado en la versión 1.1 (C8) | Importante | Ante señas ajenas al vocabulario se escribe a lo sumo el 15 % de las veces (medido con una categoría no vista); las dudosas se muestran como «¿Quiso decir…?» sin escribirse |
 | RF-12 | El sistema debe avisar cuando la persona no está bien encuadrada (modo Palabras) | Necesidad detectada al construir RF-10 (equivale a RF-06) | Deseable | Sin pose detectada aparece «Colóquese frente a la cámara: deben verse los hombros y las manos» |
 | RNF-06 | Portabilidad y despliegue: debe poder usarse descargando un ejecutable, sin instalar Python ni dependencias | Cambio C7 | Importante | `SILVA.exe` funciona descomprimido en cualquier carpeta y pasa `--verificar --camara` |
+| RF-13 | Antes de escribir una palabra, el sistema debe permitir confirmarla, cambiarla por otra opción o descartarla | Prueba con usuarios (C8) | Importante | La palabra queda provisional 2,5 s con sus 3 opciones más probables; con Espacio, 1–3 o X se confirma, cambia o descarta; si nadie actúa, se escribe sola |
+| RF-14 | El sistema debe permitir elegir la cámara y avisar cuando la mano sale del cuadro | Prueba con usuarios (C9) | Deseable | Selector de cámara en el encabezado; aviso «Aléjese un poco: una mano se sale del cuadro» |
 
 Historias de usuario nuevas:
 - **HU-06:** Como persona sorda, quiero expresar saludos y frases de cortesía completas con su seña, para no tener que deletrear cada palabra. *(RF-10, RF-11, RF-12)*
 - **HU-07:** Como persona oyente, quiero escribir mi respuesta y que se muestre en grande, para que la persona sorda pueda leer lo que le contesto. *(RF-09)*
 - **HU-08:** Como usuario, quiero descargar y abrir SILVA sin instalar nada, para usarlo en cualquier computador con cámara. *(RNF-06)*
+- **HU-09:** Como persona sorda, quiero ver la palabra que el sistema entendió antes de que se escriba y poder corregirla, para que no se escriba algo que no dije. *(RF-11, RF-13)*
+- **HU-10:** Como usuario, quiero usar otra cámara (por ejemplo el celular), para no tener que alejarme tanto del computador. *(RF-14)*
 
 ---
 
@@ -68,6 +74,7 @@ Las fechas salen del historial de Git y de las fechas de modificación de los ar
 | 1 (8 oct.) | Base técnica y MVP de letras | Estructura del repositorio; dataset de letras (JuanPlazas, 2026); análisis de letras estáticas y dinámicas; Random Forest de 17 letras; app de escritorio con captura, detección, confirmación (≥ 0,80 y 5 cuadros), historial SQLite; 30 pruebas | Grabar datos propios (objetivo 2) | **C1** (17 letras) y **C2** (modelo entrenado). La clasificación tardaba 38 ms por cuadro por el paralelismo de scikit-learn; con `n_jobs=1` bajó a 4,5 ms | [docs/metricas_modelo.md](../docs/metricas_modelo.md), [docs/dataset.md](../docs/dataset.md) |
 | 2 (8 oct.) | Pulido visual y modo Palabras | Interfaz oscura; descarga y extracción de LSC-54 (2 880 videos); comparación de 4 clasificadores × 3 conjuntos de características; segmentador de señas; prueba de punta a punta con personas no vistas | Probar con la cámara de un portátil y personas reales (PR-27 a PR-29) | **C3.** El JSON de LSC-54 pesa 51 GB, así que se extrajeron los puntos de los videos originales (970 MB). Se descartaron los colores (MediaPipe no detecta la mano junto a la cara) y los números (bajaban la exactitud a 77 %). Las señas se partían en dos al perderse la mano, y se corrigió con las muñecas de la pose y una regla anti-duplicados | [docs/metricas_palabras.md](../docs/metricas_palabras.md), PR-25 y PR-26 |
 | 3 (8 oct.) | Corrección de errores y migración de interfaz | Error «no se puede volver a iniciar» corregido; telemetría de MediaPipe detectada y eliminada (**C6**); migración a PySide6 con hilo de video (**C5**) | — | Las pruebas de la interfaz Qt encontraron un error real: SQLite rechazaba escrituras desde el hilo de video | PR-30 a PR-37 |
+| 5 (26 oct.) | Versión 1.1: correcciones por la prueba con usuarios | Clase de rechazo «otra cosa» (C8); palabra provisional con corrección y «¿Quiso decir…?» (RF-13); segmentación más estricta; selector de cámara, imagen panorámica en Palabras y aviso de bordes (C9) | Medir el campo de visión real de la cámara (la prueba dio imagen negra: tapa cerrada u oscuridad); publicar la versión 1.1 | El rechazo bajó de 81 % a 3 % las palabras falsas, pero dejó sin escribir más señas reales; se compensó con la corrección (ver 10.10) | PR-43 a PR-48 |
 | 4 (24 oct.) | Versión 1.0.0 para entregar | Función Responder (**C4**, RF-09); historial con respuestas; ícono; ejecutable de Windows con autoverificación (**C7**); tamaño recortado de 250 a 228 MB; documentación del tercer corte | Subir a GitHub y publicar el Release; pruebas manuales con usuarios | El ejecutable cargaba recursos con rutas del proyecto y escribía el historial junto al programa. Se resolvió leyendo los recursos del paquete y guardando el historial en `%LOCALAPPDATA%` | PR-38 a PR-42 |
 
 **Reflexión sobre el proceso.**
@@ -88,8 +95,10 @@ Las fechas salen del historial de Git y de las fechas de modificación de los ar
 | RF-07 | Guardar la sesión al detener y liberar la cámara | Completo | PR-09, PR-10, Figura 8 | El orden guardar → liberar está verificado |
 | RF-08 | Mostrar la confianza de cada predicción | Completo | Figuras 2 y 4 | Barra y porcentaje, en verde o ámbar según el umbral |
 | RF-09 | Responder (persona oyente → sorda) | Completo | PR-38, PR-39, Figuras 6 y 7 | Nuevo (C4) |
-| RF-10 | Reconocer 33 expresiones con movimiento | Completo | PR-26, [métricas](../docs/metricas_palabras.md), Figura 4 | 85,6 % con personas no vistas. Nuevo (C3) |
-| RF-11 | Pedir repetir las señas dudosas | Completo | PR-25f, Figura 5 | Umbral 0,20 elegido para que lo escrito acierte ≥ 90 % |
+| RF-10 | Reconocer 33 expresiones con movimiento | Completo | PR-26, PR-48, [métricas](../docs/metricas_palabras.md), Figura 4 | 85,1 % con personas no vistas (la correcta está entre las 3 primeras el 95,5 %). Nuevo (C3) |
+| RF-11 | No escribir por su cuenta señas dudosas o ajenas al vocabulario | Completo (v1.1) | PR-43, PR-48, Figuras 5 y 9 | Palabras falsas ante señas ajenas: 81 % → 3 % en la prueba de punta a punta |
+| RF-13 | Confirmar, cambiar o descartar la palabra antes de escribirla | Completo (v1.1) | PR-44 a PR-46, Figura 9 | Nuevo (C8) |
+| RF-14 | Elegir cámara y aviso de bordes | Completo (v1.1) | PR-47 | Falta medir el campo de visión con la cámara destapada |
 | RF-12 | Avisar si la persona no está encuadrada | Completo | Código (`_pintar_palabras`) | Sin prueba automática dedicada |
 | RNF-01 | Privacidad: el video no sale del equipo | Completo | PR-12, PR-30, PR-37, PR-41 | Verificado con `netstat` y `Get-NetTCPConnection` |
 | RNF-02 | Funcionar sin internet | Completo | PR-12, PR-40 | Pendiente la prueba manual con el adaptador de red desactivado (PR-19) |
@@ -225,7 +234,7 @@ No hay variables de entorno, credenciales ni secretos que configurar.
 *Nota.* Elaboración propia. Esqueleto de hombros, brazos y manos; indicador «Grabando seña»; palabra confirmada (RF-10).
 
 **Figura 5**
-*Seña dudosa: el sistema pide repetirla*
+*Seña dudosa (versión 1.0.0): el sistema pedía repetirla. En la versión 1.1 se reemplazó por «¿Quiso decir…?» (Figura 9)*
 ![Figura 5](../docs/capturas/figura_5_repetir.png)
 *Nota.* Elaboración propia. RF-11: con confianza bajo el umbral, la palabra no se escribe.
 
@@ -265,9 +274,9 @@ Evidencia: secciones 10.2, 10.3 y 10.6.
 |---|---|---|---|
 | 1 | Módulo de captura y detección de manos en tiempo real con OpenCV y MediaPipe | **Alcanzado** | `CapturaVideo`, `DetectorManos` y `DetectorCuerpo`; 13,9 ms por cuadro (PR-13); 30–31 FPS con la cámara (PR-37) |
 | 2 | Construir un dataset propio de señas estáticas | **Parcial** | Se construyó el **proceso**: el script `capturar_dataset.py`, que graba muestras etiquetadas por persona, y la integración automática al entrenamiento. Pero el modelo actual se entrenó con un dataset externo (JuanPlazas, 2026), porque el equipo aún no ha grabado sus muestras. Para completarlo, cada integrante debe grabar unos 15 minutos y volver a entrenar |
-| 3 | Entrenar un modelo que identifique la seña a partir de los landmarks | **Alcanzado** | Random Forest de letras (99,9 % en secuencias nuevas de la misma persona) y Extra Trees de palabras (85,6 % con personas no vistas). Se compararon 4 clasificadores × 3 conjuntos de características para elegir (ver [docs/dataset.md](../docs/dataset.md)) |
+| 3 | Entrenar un modelo que identifique la seña a partir de los landmarks | **Alcanzado** | Random Forest de letras (99,9 % en secuencias nuevas de la misma persona) y Extra Trees de palabras (85,1 % con personas no vistas, con una clase de rechazo para movimientos ajenos). Se compararon 4 clasificadores × 3 conjuntos de características para elegir (ver [docs/dataset.md](../docs/dataset.md)) |
 | 4 | Integrar el modelo en una app de escritorio que muestre la predicción en tiempo real | **Alcanzado** | Interfaz PySide6 con video, predicción, confianza, texto e historial (Figuras 2 y 4); ejecutable de Windows (PR-40) |
-| 5 | Evaluar la precisión con distintos usuarios y condiciones de iluminación | **Parcial** | **Palabras:** evaluadas con personas no vistas (validación cruzada por persona, 18 personas) y con una prueba de punta a punta (82,5 %). **Letras:** el dataset es de una sola persona, así que su precisión con usuarios nuevos no está medida. **Iluminación:** no se ha evaluado. Las pruebas PR-23 y PR-24 están definidas y el script de entrenamiento ya calcula la generalización por persona cuando hay datos propios |
+| 5 | Evaluar la precisión con distintos usuarios y condiciones de iluminación | **Parcial** | **Palabras:** evaluadas con personas no vistas (validación cruzada por persona, 18 personas) y con pruebas de punta a punta (versión 1.1: 60 % escritas solas y bien, 20 % recuperables con «¿Quiso decir…?», 3 % de palabras falsas ante señas ajenas). **Letras:** el dataset es de una sola persona, así que su precisión con usuarios nuevos no está medida. **Iluminación:** no se ha evaluado. Las pruebas PR-23 y PR-24 están definidas y el script de entrenamiento ya calcula la generalización por persona cuando hay datos propios |
 
 ## 10.8 Limitaciones y trabajo futuro
 
@@ -303,6 +312,54 @@ Evidencia: secciones 10.2, 10.3 y 10.6.
    - pedir la aprobación del docente antes de ampliar el alcance, y no después.
 
 ---
+
+## 10.10 Versión 1.1: hallazgos de la prueba con usuarios y cambios
+
+El 26/10/2026 el equipo probó SILVA con la cámara y registró tres problemas:
+1. **«Suelta palabras»:** sin hacer una seña, un movimiento de la mano escribía «Hola».
+2. **No se puede corregir** lo que el sistema entendió.
+3. **La cámara del portátil obliga a alejarse mucho:** las señas amplias no caben en el cuadro.
+
+**Diagnóstico medido.** Con las 1 671 señas de LSC-54 que no están en el vocabulario (colores y números), el modelo 1.0.0 escribía una palabra en el **81 %** de los casos. La causa es que solo conocía 33 opciones y siempre elegía alguna.
+
+**Cambios:**
+- **Clase de rechazo «otra cosa»** (C8). El modelo aprende con las señas de colores y números que hay movimientos que no son ninguna de las 33.
+  - La evaluación es honesta: se mide con personas no vistas **y** con una categoría de «otra cosa» que el modelo no vio (entrenado con números, probado con colores, y al revés).
+- **Regla de decisión en tres niveles:**
+  - **Segura:** se escribe de forma *provisional*.
+  - **Dudosa:** se muestra *«¿Quiso decir…?»* con 3 opciones.
+  - **«Otra cosa» gana:** no se muestra nada.
+  - El umbral de lo seguro se elige para que lo escrito solo acierte ≥ 95 % y escriba a lo sumo un 15 % de señas ajenas.
+- **Corrección (RF-13).** La palabra aparece en grande sobre el video y en el panel lateral con sus 3 opciones (Figura 9).
+  - Espacio confirma, 1–3 cambian la opción y X descarta.
+  - Si nadie actúa, la provisional se escribe a los 2,5 s, o en cuanto empieza la siguiente seña.
+- **Segmentación más estricta.** Una seña debe durar al menos ~0,27 s de manos activas, y la pausa entre señas es de ~0,33 s.
+- **Cámara (RF-14):**
+  - Selector de cámara, para usar el celular como cámara web.
+  - Imagen panorámica (1280×720) en modo Palabras, que en muchas cámaras de portátil ve más a los lados que 640×480.
+  - Aviso cuando una mano sale del cuadro.
+
+**Resultados** (personas no vistas 29 y 33; 40 señas del vocabulario mezcladas con 30 señas ajenas, por el mismo camino que la cámara):
+
+| | Versión 1.0.0 | Versión 1.1 |
+|---|---|---|
+| Señas ajenas escritas como palabra | ~81 % | **3 %** (y quedan provisionales) |
+| Señas del vocabulario escritas solas y bien | 82,5 % | 60 % |
+| …recuperables eligiendo en «¿Quiso decir…?» | — | 20 % (la correcta estuvo siempre entre las 3) |
+| …escritas solas pero mal (corregibles antes de escribirse) | 12,5 % | 5 % |
+| …ignoradas (hay que repetirlas) | 0 % | 15 % |
+
+**Decisión.** Se prefirió que SILVA escriba menos pero acierte, porque una palabra falsa en una conversación confunde más que una seña que hay que repetir. El costo (15 % de señas ignoradas) queda como limitación, y la mejora está en el trabajo futuro: más datos de LSC y datos de "movimientos cotidianos" (rascarse, acomodarse) como «otra cosa».
+
+**Pendiente del equipo:**
+- Repetir la prueba con usuarios con la versión 1.1.
+- Medir el campo de visión con la cámara destapada: la medición automática recibió imagen negra.
+- Las Figuras 4 y 5 son de la versión 1.0.0. La Figura 9 muestra la corrección:
+
+**Figura 9**
+*Versión 1.1: palabra provisional con opciones para corregirla*
+![Figura 9](../docs/capturas/figura_9_correccion.png)
+*Nota.* Elaboración propia, con datos sintéticos. Tarjeta sobre el video (visible para quien signa) y panel lateral con las 3 opciones, Confirmar y Descartar.
 
 ## 11. Diagramas técnicos actualizados
 
@@ -412,12 +469,14 @@ sequenceDiagram
             S-->>C: secuencia
             C->>K: predecir(secuencia)
             K-->>C: palabra, confianza
-            alt confianza ≥ umbral y no es duplicado
-                C->>H: registrar_letra(palabra)
-                C-->>T: palabra confirmada
-            else confianza baja
-                C-->>T: descartada (pedir repetir)
+            alt segura (≥ umbral y gana a «otra cosa»)
+                C-->>T: palabra provisional (2,5 s para corregir)
+            else dudosa
+                C-->>T: «¿Quiso decir…?» con 3 opciones
+            else «otra cosa» gana
+                C-->>T: nada (movimiento ignorado)
             end
+            Note over C,V: confirmar_pendiente(i) o descartar_pendiente() desde la ventana;<br/>si nadie actúa, la provisional se escribe (C->>H: registrar_letra)
         end
         T-->>V: señal cuadro_listo(resultado, imagen)
     end

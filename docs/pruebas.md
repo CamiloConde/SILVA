@@ -105,3 +105,15 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-40 | Despliegue | `SILVA.exe --verificar --camara`, descomprimido **fuera** del proyecto y sin Python del proyecto | Carga los 4 modelos, abre el historial y lee la cámara | Todo correcto; cámara 15/15 cuadros | Aprobada |
 | PR-41 | Despliegue / RNF-01 | Abrir `SILVA.exe`, observar 15 s con `Get-NetTCPConnection` y cerrar la ventana | Ventana abierta, sin conexiones de red, cierre limpio | Título «SILVA 1.0.0», ninguna conexión, cierre correcto; ~745 MB de RAM | Aprobada |
 | PR-42 | Despliegue | El historial del ejecutable se guarda fuera de la carpeta del programa | `%LOCALAPPDATA%\SILVA\historial.db` | Correcto (informe de PR-40) | Aprobada |
+
+## Versión 1.1: rechazo, corrección y cámara (prueba con usuarios del 26/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-43 | Precisión | 1 671 señas de LSC-54 ajenas al vocabulario con el modelo 1.0.0 | — (diagnóstico) | **81 %** terminaban escritas como una palabra | Defecto confirmado |
+| PR-44 | Integración (`test_palabras.py`) | Seña segura, seña dudosa, movimiento ajeno, corregir, descartar, empezar otra seña, detener | Provisional que se escribe sola; sugerencia que solo se escribe si se elige; ajeno ignorado | Correcto (8 pruebas con reloj simulado) | Aprobada |
+| PR-45 | Interfaz (`test_interfaz.py`) | Panel de corrección: elegir la opción 2, descartar una sugerencia, Espacio confirma | Texto correcto y panel oculto | Correcto | Aprobada |
+| PR-46 | Interfaz | La ventana no crece al aparecer el panel de corrección | Mismo tamaño | Mínimo 766 px de alto (antes 931); la ventana se queda en 820 | Aprobada |
+| PR-47 | Funcional | Cambio de resolución en vivo con la cámara real (Deletreo ↔ Palabras) | 640×480 ↔ 1280×720 | Correcto (procesado en 640×360). La imagen salió negra: no se pudo medir el campo de visión | Parcial |
+| PR-48 | Precisión, punta a punta | 40 señas del vocabulario + 30 ajenas, personas 29 y 33 no vistas, reloj de 30 cuadros/s | Pocas palabras falsas | Ajenas escritas: 3 %. Vocabulario: 60 % solas y bien, 20 % recuperables con «¿Quiso decir?», 5 % mal (corregibles), 15 % ignoradas | Aprobada |
+| PR-49 | Usabilidad (manual) | Repetir la prueba del 26/10 con la versión 1.1 | Sin palabras «de la nada»; corrección entendible | | Pendiente |

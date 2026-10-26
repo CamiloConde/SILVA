@@ -1,6 +1,6 @@
 # SILVA
 
-**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.0.0
+**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.1.0
 
 SILVA es una aplicación de escritorio que traduce a texto, en tiempo real, señas de la Lengua de Señas Colombiana (LSC) captadas con una cámara web. También permite que la persona oyente responda por escrito. Todo se procesa en el equipo: no necesita internet ni envía video a ningún servidor.
 
@@ -10,7 +10,7 @@ Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bol�
 
 ## Descargar y usar (sin instalar nada)
 
-1. En [Releases](https://github.com/CamiloConde/SILVA/releases) descargue `SILVA-v1.0.0-windows.zip` (unos 230 MB).
+1. En [Releases](https://github.com/CamiloConde/SILVA/releases) descargue `SILVA-v1.1.0-windows.zip` (unos 230 MB).
 2. Descomprímalo completo y abra `SILVA\SILVA.exe`.
    - Si Windows muestra «Windows protegió su PC», elija *Más información → Ejecutar de todas formas*. Aparece porque el ejecutable no está firmado digitalmente.
 3. Presione **Iniciar** (o Enter).
@@ -30,12 +30,15 @@ Para comprobar una instalación: `SILVA.exe --verificar --camara` crea un inform
 Además:
 - Muestra la confianza de cada predicción.
 - Avisa cuando no detecta la mano o a la persona.
-- Si una seña es dudosa, pide repetirla en vez de escribir algo equivocado.
+- En modo Palabras, la palabra reconocida aparece primero como **provisional** (2,5 s) con sus 3 opciones más probables. Se puede confirmar (Espacio), cambiar (1, 2, 3) o descartar (X); si nadie hace nada, se escribe sola.
+- Si la seña es dudosa, muestra **«¿Quiso decir…?»** con 3 opciones y no escribe nada salvo que alguien elija. Los movimientos que no son una de las 33 señas se ignoran.
 - Guarda cada sesión y cada respuesta en un historial local.
 
 **Precisión:**
 - **Letras:** 99,9 % en secuencias nuevas, pero todas de la misma persona del dataset, así que es una cifra optimista.
-- **Palabras:** 85,6 % con personas que el modelo nunca vio. Con el umbral de confianza, la app escribe el 88 % de las señas y acierta en el 91 % de lo que escribe; las demás las pide repetir.
+- **Palabras:** 85,1 % con personas que el modelo nunca vio (la correcta está entre las 3 primeras opciones el 95,5 %).
+  - La app escribe sola el 67 % de las señas, con 96 % de acierto, y otro 21 % lo ofrece como «¿Quiso decir…?».
+  - Ante señas que no son del vocabulario escribe una palabra a lo sumo el 11,5 % de las veces (versión 1.0.0: 81 %), y queda provisional.
 
 El detalle está en [docs/metricas_modelo.md](docs/metricas_modelo.md) y [docs/metricas_palabras.md](docs/metricas_palabras.md).
 
@@ -52,6 +55,9 @@ El detalle está en [docs/metricas_modelo.md](docs/metricas_modelo.md) y [docs/m
 | **Espacio** · barra espaciadora | Separa palabras (modo Deletreo) |
 | **Borrar** · Retroceso | Borra la última letra o palabra |
 | **Limpiar** · Supr | Borra todo el texto |
+| **1 · 2 · 3** (modo Palabras) | Cambiar la palabra provisional por esa opción, o elegirla en «¿Quiso decir…?» |
+| **Espacio** (modo Palabras) / **X** | Confirmar ya la palabra provisional / descartarla |
+| **Cámara 1–4** (encabezado) | Elegir la cámara, por ejemplo el celular como cámara web (con Enlace Móvil de Windows 11 o apps como DroidCam o Iriun) |
 | **Responder** · Ctrl+R | Escribir una respuesta y mostrarla en grande. Para cerrarla: clic sobre el video o Esc |
 | **Historial** | Sesiones traducidas y respuestas guardadas |
 
@@ -85,7 +91,7 @@ Los modelos ya vienen en `modelos/`, así que después de instalar la app funcio
 python -m pytest -v
 ```
 
-Son 51 pruebas automáticas:
+Son 60 pruebas automáticas:
 - Regla de confirmación de letras y normalización de puntos.
 - Detectores reales de MediaPipe y los dos clasificadores.
 - Segmentación de señas con movimiento.
@@ -106,11 +112,11 @@ python scripts/construir_ejecutable.py
 El script hace tres cosas:
 1. Empaqueta con PyInstaller ([empaquetado/silva.spec](empaquetado/silva.spec)).
 2. Verifica que el ejecutable cargue todos los modelos por sí solo.
-3. Genera `dist/SILVA-v1.0.0-windows.zip`, que es el archivo que se sube a *Releases*.
+3. Genera `dist/SILVA-v1.1.0-windows.zip`, que es el archivo que se sube a *Releases*.
 
 Pasos para publicar:
 1. En GitHub, entre a **Releases** y luego a **Draft a new release**.
-2. Cree la etiqueta `v1.0.0`.
+2. Cree la etiqueta `v1.1.0`.
 3. Adjunte el `.zip`.
 4. Publique con **Publish release**.
 
