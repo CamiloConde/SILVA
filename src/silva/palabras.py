@@ -33,6 +33,19 @@ MARGEN = 2  # cuadros de reposo que se conservan antes y después
 ALTURA_ACTIVA = 0.8
 MOVIMIENTO_ACTIVO = 0.12  # desplazamiento de la muñeca por cuadro (anchos de hombro)
 
+# En vivo el segmentador mide en segundos, no en cuadros: los valores de arriba se calibraron con el video
+# a 30 cuadros/s de LSC-54, y un teléfono procesa 10-20. Contando cuadros, a 15 cuadros/s una seña tenía que
+# durar el doble para contar, la pausa final se alargaba al doble y el umbral de movimiento (por cuadro) se
+# volvía el doble de sensible. Sin reloj (entrenamiento, pruebas) se supone 30 cuadros/s: da lo mismo que antes.
+FPS_REFERENCIA = 30
+SEGUNDOS_MIN_ACTIVOS = MIN_ACTIVOS / FPS_REFERENCIA
+SEGUNDOS_FIN = CUADROS_FIN / FPS_REFERENCIA
+SEGUNDOS_MAX = (MAX_CUADROS - 1) / FPS_REFERENCIA
+SEGUNDOS_MARGEN = MARGEN / FPS_REFERENCIA
+VELOCIDAD_ACTIVA = MOVIMIENTO_ACTIVO * FPS_REFERENCIA  # anchos de hombro por segundo
+_PASO_MAXIMO = 0.2  # un hueco largo entre cuadros (p. ej. sin pose) cuenta a lo sumo esto como actividad
+_HOLGURA = 1e-6
+
 _I_MUNECA = (N_POSE, N_POSE + N_MANO)  # inicio de cada mano en el vector; la muñeca es el punto 0
 
 
@@ -185,17 +198,21 @@ class EstadoSegmentador:
     grabando: bool
     cuadros: int  # cuadros en la seña en curso
     terminada: np.ndarray | None  # secuencia completa cuando la seña termina
+    segundos: float = 0.0  # duración de la seña en curso
+    inicio: float | None = None  # momento del primer cuadro de `terminada`
 
 
 class SegmentadorSenas:
-    """Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo."""
+    """Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo, medida en segundos."""
 
     def __init__(self) -> None:
-        self._previo: deque[np.ndarray] = deque(maxlen=MARGEN)
-        self._actual: list[np.ndarray] = []
-        self._reposo = 0
-        self._activos = 0
+        self._previo: deque[tuple[float, np.ndarray]] = deque()
+        self._actual: list[tuple[float, np.ndarray]] = []
+        self._activos = 0.0  # segundos con alguna mano activa
+        self._t_activo = 0.0  # último cuadro activo
         self._munecas_previas: list[np.ndarray] = []
+        self._t_previo: float | None = None
+        self._n = 0  # cuadros recibidos: reloj por omisión, a 30 cuadros/s
 
     @property
     def grabando(self) -> bool:
@@ -204,43 +221,58 @@ class SegmentadorSenas:
     def reiniciar(self) -> None:
         self._previo.clear()
         self._actual = []
-        self._reposo = 0
-        self._activos = 0
+        self._activos = 0.0
         self._munecas_previas = []
+        self._t_previo = None
 
-    def _es_activo(self, f: np.ndarray) -> bool:
+    def _es_activo(self, f: np.ndarray, t: float) -> bool:
         munecas = _munecas(f)
         levantada = _levantada(f, munecas)
-        movida = bool(self._munecas_previas and munecas) and any(
-            min(np.linalg.norm(m - p) for p in self._munecas_previas) > MOVIMIENTO_ACTIVO for m in munecas
-        )
+        movida = False
+        if self._munecas_previas and munecas and self._t_previo is not None:
+            dt = max(t - self._t_previo, 1e-3)
+            movida = any(min(np.linalg.norm(m - p) for p in self._munecas_previas) / dt > VELOCIDAD_ACTIVA
+                         for m in munecas)
         self._munecas_previas = munecas
         return levantada or movida
 
-    def agregar(self, f: np.ndarray | None) -> EstadoSegmentador:
-        if f is None:  # sin pose en este cuadro: se ignora
-            return EstadoSegmentador(self.grabando, len(self._actual), None)
+    def _duracion(self, t: float) -> float:
+        return t - self._actual[0][0] if self._actual else 0.0
 
-        activo = self._es_activo(f)
-        terminada = None
+    def agregar(self, f: np.ndarray | None, t: float | None = None) -> EstadoSegmentador:
+        """f = vector del cuadro (None si no hay pose: se ignora); t = momento del cuadro en segundos."""
+        if t is None:
+            t = self._n / FPS_REFERENCIA
+        if f is None:
+            return EstadoSegmentador(self.grabando, len(self._actual), None, self._duracion(t))
+        self._n += 1
+        paso = min(t - self._t_previo, _PASO_MAXIMO) if self._t_previo is not None else 1 / FPS_REFERENCIA
+        activo = self._es_activo(f, t)
+        self._t_previo = t
+        terminada, inicio = None, None
         if not self._actual:
             if activo:
-                self._actual = [*self._previo, f]
-                self._reposo = 0
-                self._activos = 1
-            else:
-                self._previo.append(f)
+                self._actual = [(tp, fp) for tp, fp in self._previo if tp >= t - SEGUNDOS_MARGEN - _HOLGURA]
+                self._actual.append((t, f))
+                self._activos = paso
+                self._t_activo = t
+            else:  # se guarda el reposo justo anterior, para empezar la seña un poco antes
+                self._previo.append((t, f))
+                while self._previo[0][0] < t - SEGUNDOS_MARGEN - _HOLGURA:
+                    self._previo.popleft()
         else:
-            self._actual.append(f)
-            self._reposo = 0 if activo else self._reposo + 1
-            self._activos += int(activo)
-            if self._reposo >= CUADROS_FIN or len(self._actual) >= MAX_CUADROS:
-                seq = np.array(self._actual)
-                if self._reposo >= CUADROS_FIN:
-                    seq = seq[: len(seq) - self._reposo + MARGEN]
-                if self._activos >= MIN_ACTIVOS:
-                    terminada = seq
+            self._actual.append((t, f))
+            if activo:
+                self._activos += paso
+                self._t_activo = t
+            quieto = t - self._t_activo >= SEGUNDOS_FIN - _HOLGURA
+            if quieto or self._duracion(t) >= SEGUNDOS_MAX - _HOLGURA:
+                cuadros = self._actual
+                if quieto:  # sin el reposo del final, salvo un margen
+                    cuadros = [(tc, fc) for tc, fc in cuadros if tc <= self._t_activo + SEGUNDOS_MARGEN + _HOLGURA]
+                if self._activos >= SEGUNDOS_MIN_ACTIVOS - _HOLGURA:
+                    terminada = np.array([fc for _, fc in cuadros])
+                    inicio = cuadros[0][0]
                 self._actual = []
                 self._previo.clear()
-                self._reposo = 0
-        return EstadoSegmentador(self.grabando, len(self._actual), terminada)
+        return EstadoSegmentador(self.grabando, len(self._actual), terminada, self._duracion(t), inicio)
