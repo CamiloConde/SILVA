@@ -20,11 +20,13 @@ import java.io.File
 object Prueba {
     private const val TAG = "SILVA-PRUEBA"
 
-    fun ejecutar(context: Context, modelos: Modelos) = Thread {
+    fun ejecutar(context: Context, modelos: Modelos, config: Aceleracion) = Thread {
         val raiz = File(context.filesDir, "prueba")
         val carpetas = raiz.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name } ?: emptyList()
         Log.i(TAG, "Inicio: ${carpetas.size} secuencias en $raiz")
-        val detectores = Detectores(context, palabras = true)
+        val detectores = Detectores(context, config)
+        detectores.preparar(palabras = true)
+        Log.i(TAG, "Detectores: ${detectores.aceleracion}")
         var ms = 0L
         for (carpeta in carpetas.filter { it.name.startsWith("L_") }) probarLetras(carpeta, modelos, detectores)
         for (carpeta in carpetas.filterNot { it.name.startsWith("L_") }) {
@@ -61,7 +63,8 @@ object Prueba {
             ms += 1000
             val n = imagenes.size + 15
             Log.i(TAG, "${carpeta.name}: ${imagenes.size} cuadros · pose ${100 * conPose / n}% · mano ${100 * conMano / n}% · " +
-                "${duracion / n / 1_000_000} ms/cuadro · teléfono: $reconocido")
+                "${duracion / n / 1_000_000} ms/cuadro (${detectores.tiempos}) · teléfono: $reconocido")
+            detectores.tiempos.reiniciar()
         }
         detectores.close()
         Log.i(TAG, "Fin")

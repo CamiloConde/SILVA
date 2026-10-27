@@ -22,63 +22,95 @@ private fun levantada(f: FloatArray, munecas: List<FloatArray>): Boolean =
 private fun distancia(a: FloatArray, b: FloatArray): Double =
     hypot(a[0].toDouble() - b[0], a[1].toDouble() - b[1])
 
-data class EstadoSegmentador(val grabando: Boolean, val cuadros: Int, val terminada: List<FloatArray>?)
+data class EstadoSegmentador(
+    val grabando: Boolean,
+    val cuadros: Int,
+    val terminada: List<FloatArray>?,
+    val segundos: Double = 0.0,  // duración de la seña en curso
+    val inicio: Double? = null,  // momento del primer cuadro de «terminada»
+)
 
-/** Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo. */
+private const val PASO_MAXIMO = 0.2  // un hueco largo entre cuadros cuenta a lo sumo esto como actividad
+private const val HOLGURA = 1e-6
+
+/**
+ * Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo, medida en segundos
+ * (silva.palabras.SegmentadorSenas): funciona igual a 30 que a 15 cuadros/s. Sin reloj supone 30 cuadros/s.
+ */
 class SegmentadorSenas {
-    private val previo = ArrayDeque<FloatArray>()
-    private var actual = mutableListOf<FloatArray>()
-    private var reposo = 0
-    private var activos = 0
+    private class Cuadro(val t: Double, val f: FloatArray)
+
+    private val previo = ArrayDeque<Cuadro>()
+    private var actual = mutableListOf<Cuadro>()
+    private var activos = 0.0  // segundos con alguna mano activa
+    private var tActivo = 0.0  // último cuadro activo
     private var munecasPrevias: List<FloatArray> = emptyList()
+    private var tPrevio: Double? = null
+    private var n = 0  // cuadros recibidos: reloj por omisión, a 30 cuadros/s
 
     val grabando get() = actual.isNotEmpty()
 
     fun reiniciar() {
         previo.clear()
         actual = mutableListOf()
-        reposo = 0
-        activos = 0
+        activos = 0.0
         munecasPrevias = emptyList()
+        tPrevio = null
     }
 
-    private fun esActivo(f: FloatArray): Boolean {
+    private fun esActivo(f: FloatArray, t: Double): Boolean {
         val m = munecas(f)
         val arriba = levantada(f, m)
-        val movida = munecasPrevias.isNotEmpty() && m.isNotEmpty() &&
-            m.any { a -> munecasPrevias.minOf { distancia(a, it) } > Config.MOVIMIENTO_ACTIVO }
+        val antes = tPrevio
+        val movida = munecasPrevias.isNotEmpty() && m.isNotEmpty() && antes != null && run {
+            val dt = maxOf(t - antes, 1e-3)
+            m.any { a -> munecasPrevias.minOf { distancia(a, it) } / dt > Config.VELOCIDAD_ACTIVA }
+        }
         munecasPrevias = m
         return arriba || movida
     }
 
-    /** f = vector del cuadro, o null si no hay pose (el cuadro se ignora). */
-    fun agregar(f: FloatArray?): EstadoSegmentador {
-        if (f == null) return EstadoSegmentador(grabando, actual.size, null)
-        val activo = esActivo(f)
+    private fun duracion(t: Double) = if (actual.isEmpty()) 0.0 else t - actual[0].t
+
+    /** f = vector del cuadro, o null si no hay pose (el cuadro se ignora); tCuadro = momento en segundos. */
+    fun agregar(f: FloatArray?, tCuadro: Double? = null): EstadoSegmentador {
+        val t = tCuadro ?: (n / Config.FPS_REFERENCIA)
+        if (f == null) return EstadoSegmentador(grabando, actual.size, null, duracion(t))
+        n++
+        val paso = tPrevio?.let { minOf(t - it, PASO_MAXIMO) } ?: (1 / Config.FPS_REFERENCIA)
+        val activo = esActivo(f, t)
+        tPrevio = t
         var terminada: List<FloatArray>? = null
+        var inicio: Double? = null
         if (actual.isEmpty()) {
             if (activo) {
-                actual = (previo + f).toMutableList()
-                reposo = 0
-                activos = 1
-            } else {
-                previo.addLast(f)
-                while (previo.size > Config.MARGEN) previo.removeFirst()
+                actual = previo.filter { it.t >= t - Config.SEGUNDOS_MARGEN - HOLGURA }.toMutableList()
+                actual.add(Cuadro(t, f))
+                activos = paso
+                tActivo = t
+            } else {  // se guarda el reposo justo anterior, para empezar la seña un poco antes
+                previo.addLast(Cuadro(t, f))
+                while (previo.first().t < t - Config.SEGUNDOS_MARGEN - HOLGURA) previo.removeFirst()
             }
         } else {
-            actual.add(f)
-            reposo = if (activo) 0 else reposo + 1
-            if (activo) activos++
-            if (reposo >= Config.CUADROS_FIN || actual.size >= Config.MAX_CUADROS) {
-                var seq: List<FloatArray> = actual
-                if (reposo >= Config.CUADROS_FIN) seq = seq.subList(0, seq.size - reposo + Config.MARGEN)
-                if (activos >= Config.MIN_ACTIVOS) terminada = seq.toList()
+            actual.add(Cuadro(t, f))
+            if (activo) {
+                activos += paso
+                tActivo = t
+            }
+            val quieto = t - tActivo >= Config.SEGUNDOS_FIN - HOLGURA
+            if (quieto || duracion(t) >= Config.SEGUNDOS_MAX - HOLGURA) {
+                // sin el reposo del final, salvo un margen
+                val cuadros = if (quieto) actual.filter { it.t <= tActivo + Config.SEGUNDOS_MARGEN + HOLGURA } else actual
+                if (activos >= Config.SEGUNDOS_MIN_ACTIVOS - HOLGURA) {
+                    terminada = cuadros.map { it.f }
+                    inicio = cuadros[0].t
+                }
                 actual = mutableListOf()
                 previo.clear()
-                reposo = 0
             }
         }
-        return EstadoSegmentador(grabando, actual.size, terminada)
+        return EstadoSegmentador(grabando, actual.size, terminada, duracion(t), inicio)
     }
 }
 
@@ -174,7 +206,10 @@ class ClasificadorPalabras(
     val umbral: Double,
     val umbralSugerencia: Double,
 ) {
-    val palabras: List<String> = clases.filter { it != OTRA }.map { nombres[it] ?: it }
+    /** Claves de las señas (las del entrenamiento, p. ej. «Buenos dias») y su nombre visible («Buenos días»). */
+    val claves: List<String> = clases.filter { it != OTRA }
+    fun nombre(clave: String) = nombres[clave] ?: clave
+    val palabras: List<String> = claves.map { nombre(it) }
 
     fun evaluar(cuadros: List<FloatArray>): Evaluacion {
         val p = bosque.probabilidades(vectorSecuencia(cuadros))

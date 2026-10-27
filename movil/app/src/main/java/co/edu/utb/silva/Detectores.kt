@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
+import android.util.Log
 import co.edu.utb.silva.nucleo.Config
 import co.edu.utb.silva.nucleo.CuadroCuerpo
 import co.edu.utb.silva.nucleo.MANO_POSE_DER
@@ -15,50 +16,130 @@ import co.edu.utb.silva.nucleo.Punto
 import co.edu.utb.silva.nucleo.asignarManos
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlin.math.hypot
 
 /**
  * MediaPipe en el teléfono, con la misma configuración que la app de PC (silva.detector_manos y
  * silva.cuerpo): una mano para Deletreo; pose y dos manos para Palabras, calculadas en paralelo, y
  * recuperación de la mano perdida en un recorte ampliado alrededor de la muñeca de la pose.
+ *
+ * Rendimiento:
+ * - Las manos corren en la GPU del teléfono y la pose en la CPU, al mismo tiempo (ver Aceleracion); si la GPU
+ *   falla al crear o al probar un detector, ese detector usa la CPU.
+ * - Cada detector se crea la primera vez que su modo lo necesita, en el hilo de la cámara.
+ * - Si la búsqueda de una mano perdida no la encuentra, no se repite en los 2 cuadros siguientes
+ *   (si la mano está fuera de la imagen, buscarla en cada cuadro solo cuesta tiempo).
  */
-class Detectores(private val context: Context, palabras: Boolean) : AutoCloseable {
-    private fun base(modelo: String) = BaseOptions.builder().setModelAssetPath("modelos/$modelo").build()
+/**
+ * Dónde corre cada parte. Medido en un Galaxy A35 (modo Palabras): todo en CPU 7-10 fps; todo en GPU ~13 fps
+ * (pose y manos se estorban en la GPU); manos en GPU y pose en CPU, a la vez, 16-17 fps. Las manos (dos manos
+ * y la búsqueda de la palma) son lo más pesado, así que van a la GPU. La versión de desarrollo permite
+ * cambiarlo para medir (ver MainActivity).
+ */
+data class Aceleracion(val gpuPose: Boolean = false, val gpuManos: Boolean = true, val paralelo: Boolean = true)
 
-    private fun manos(n: Int, confianza: Float, modo: RunningMode) = HandLandmarker.createFromOptions(context,
-        HandLandmarker.HandLandmarkerOptions.builder()
-            .setBaseOptions(base("hand_landmarker.task"))
-            .setRunningMode(modo)
-            .setNumHands(n)
-            .setMinHandDetectionConfidence(confianza)
-            .setMinHandPresenceConfidence(confianza)
-            .setMinTrackingConfidence(confianza)
-            .build())
+class Detectores(private val context: Context, private val config: Aceleracion = Aceleracion()) : AutoCloseable {
+    /** "GPU", "CPU" o "GPU+CPU" según cómo quedaron los detectores creados. */
+    @Volatile var aceleracion = ""; private set
+    private val enGpu = mutableListOf<Boolean>()
 
-    private val manoLetras = manos(1, Config.CONFIANZA_DETECCION, RunningMode.VIDEO)
-    private val manosPalabras = if (palabras) manos(2, Config.CONFIANZA_MANOS_PALABRAS, RunningMode.VIDEO) else null
-    private val pose = if (palabras) PoseLandmarker.createFromOptions(context,
-        PoseLandmarker.PoseLandmarkerOptions.builder()
-            .setBaseOptions(base("pose_landmarker_lite.task"))
-            .setRunningMode(RunningMode.VIDEO)
-            .setNumPoses(1)
-            .build()) else null
-    private val recuperadores = if (palabras) List(2) { manos(1, Config.CONFIANZA_RECUPERACION, RunningMode.IMAGE) } else emptyList()
+    private fun base(modelo: String, delegado: Delegate) =
+        BaseOptions.builder().setModelAssetPath("modelos/$modelo").setDelegate(delegado).build()
+
+    /** Crea el detector en la GPU y lo prueba con una imagen vacía; si algo falla, lo crea en la CPU. */
+    private fun <T : AutoCloseable> crear(nombre: String, usarGpu: Boolean, fabrica: (Delegate) -> T, probar: (T) -> Unit): T {
+        if (usarGpu) {
+            var detector: T? = null
+            try {
+                detector = fabrica(Delegate.GPU)
+                probar(detector)
+                anotar(true)
+                return detector
+            } catch (e: Throwable) {
+                Log.w("SILVA", "$nombre: la GPU no está disponible, se usa la CPU (${e.message})")
+                try { detector?.close() } catch (_: Throwable) {}
+            }
+        }
+        val detector = fabrica(Delegate.CPU)
+        anotar(false)
+        return detector
+    }
+
+    private fun anotar(gpu: Boolean) = synchronized(enGpu) {
+        enGpu.add(gpu)
+        aceleracion = when {
+            enGpu.all { it } -> "GPU"
+            enGpu.none { it } -> "CPU"
+            else -> "GPU+CPU"
+        }
+    }
+
+    private val vacia: Bitmap by lazy { Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888) }
+
+    private fun manos(n: Int, confianza: Float, modo: RunningMode) = crear("Manos", config.gpuManos, { d ->
+        HandLandmarker.createFromOptions(context,
+            HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(base("hand_landmarker.task", d))
+                .setRunningMode(modo)
+                .setNumHands(n)
+                .setMinHandDetectionConfidence(confianza)
+                .setMinHandPresenceConfidence(confianza)
+                .setMinTrackingConfidence(confianza)
+                .build())
+    }) { if (modo == RunningMode.VIDEO) it.detectForVideo(BitmapImageBuilder(vacia).build(), 0) else it.detect(BitmapImageBuilder(vacia).build()) }
+
+    private val manoLetrasPerezosa = lazy { manos(1, Config.CONFIANZA_DETECCION, RunningMode.VIDEO) }
+    private val manosPalabrasPerezosa = lazy { manos(2, Config.CONFIANZA_MANOS_PALABRAS, RunningMode.VIDEO) }
+    private val posePerezosa = lazy {
+        crear("Pose", config.gpuPose, { d ->
+            PoseLandmarker.createFromOptions(context,
+                PoseLandmarker.PoseLandmarkerOptions.builder()
+                    .setBaseOptions(base("pose_landmarker_lite.task", d))
+                    .setRunningMode(RunningMode.VIDEO)
+                    .setNumPoses(1)
+                    .build())
+        }) { it.detectForVideo(BitmapImageBuilder(vacia).build(), 0) }
+    }
+    private val recuperadoresPerezosos = lazy { List(2) { manos(1, Config.CONFIANZA_RECUPERACION, RunningMode.IMAGE) } }
     private val hilos = Executors.newFixedThreadPool(2)
-    private var ultimoLetras = -1L
-    private var ultimoPalabras = -1L
+    // 0 ya lo usó la prueba de la GPU con la imagen vacía: MediaPipe exige marcas de tiempo crecientes
+    private var ultimoLetras = 0L
+    private var ultimoPalabras = 0L
     private var cuadroLento = false  // el cuadro anterior tardó más de 70 ms
     private var saltarRecuperacion = false
+    private val esperaRecuperar = IntArray(2)  // cuadros que faltan para volver a buscar cada mano perdida
+
+    /** Milisegundos acumulados por etapa (para el registro de rendimiento). */
+    val tiempos = Tiempos()
+
+    class Tiempos {
+        var cuadros = 0; var pose = 0L; var manos = 0L; var recuperar = 0L; var recuperaciones = 0
+        fun reiniciar() { cuadros = 0; pose = 0; manos = 0; recuperar = 0; recuperaciones = 0 }
+        override fun toString() = if (cuadros == 0) "" else
+            "pose ${pose / cuadros} ms · manos ${manos / cuadros} ms · recuperar ${recuperar / cuadros} ms ($recuperaciones búsquedas)"
+    }
+
+    /** Crea por adelantado los detectores de un modo (para no hacerlo con el primer cuadro). */
+    fun preparar(palabras: Boolean) {
+        if (palabras) {
+            posePerezosa.value; manosPalabrasPerezosa.value; recuperadoresPerezosos.value
+        } else manoLetrasPerezosa.value
+    }
 
     /** Modo Deletreo: la mano y si es la izquierda (según MediaPipe, igual que en el PC). */
     fun mano(imagen: Bitmap, ms: Long): ManoDetectada? {
+        val inicio = SystemClock.uptimeMillis()
         ultimoLetras = maxOf(ms, ultimoLetras + 1)
-        val r = manoLetras.detectForVideo(BitmapImageBuilder(imagen).build(), ultimoLetras)
+        val r = manoLetrasPerezosa.value.detectForVideo(BitmapImageBuilder(imagen).build(), ultimoLetras)
+        tiempos.manos += SystemClock.uptimeMillis() - inicio
+        tiempos.cuadros++
         if (r.landmarks().isEmpty()) return null
         val puntos = r.landmarks()[0].map { Punto(it.x(), it.y()) }
         // por el nombre y no por el índice: en MediaPipe para Android el índice puede venir vacío (-1)
@@ -67,23 +148,42 @@ class Detectores(private val context: Context, palabras: Boolean) : AutoCloseabl
 
     /** Modo Palabras: pose y la mano de cada lado de la persona. */
     fun cuerpo(imagen: Bitmap, ms: Long): CuadroCuerpo {
+        val pose = posePerezosa.value
+        val manosPalabras = manosPalabrasPerezosa.value
         val inicio = SystemClock.uptimeMillis()
         ultimoPalabras = maxOf(ms, ultimoPalabras + 1)
         val ts = ultimoPalabras
         val mp = BitmapImageBuilder(imagen).build()
-        val enCurso = hilos.submit(Callable { pose!!.detectForVideo(mp, ts) })
-        val rManos = manosPalabras!!.detectForVideo(mp, ts)
-        val rPose = enCurso.get()
+        val rPose: com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
+        val rManos: com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
+        if (config.paralelo) {
+            var finPose = 0L
+            val enCurso = hilos.submit(Callable { pose.detectForVideo(mp, ts).also { finPose = SystemClock.uptimeMillis() } })
+            rManos = manosPalabras.detectForVideo(mp, ts)
+            val finManos = SystemClock.uptimeMillis()
+            rPose = enCurso.get()
+            tiempos.pose += finPose - inicio
+            tiempos.manos += finManos - inicio
+        } else {
+            rPose = pose.detectForVideo(mp, ts)
+            val finPose = SystemClock.uptimeMillis()
+            rManos = manosPalabras.detectForVideo(mp, ts)
+            tiempos.pose += finPose - inicio
+            tiempos.manos += SystemClock.uptimeMillis() - finPose
+        }
         val puntosPose = rPose.landmarks().firstOrNull()?.map { Punto(it.x(), it.y()) }
         val manos = rManos.landmarks().map { m -> m.map { Punto(it.x(), it.y()) } }
         var (izq, der) = asignarManos(puntosPose, manos)
         // En un teléfono lento la recuperación de la mano perdida se hace un cuadro sí y otro no
         saltarRecuperacion = cuadroLento && !saltarRecuperacion
         if (puntosPose != null && !saltarRecuperacion) {
+            val antes = SystemClock.uptimeMillis()
             val r = recuperar(imagen, puntosPose, izq, der)
+            tiempos.recuperar += SystemClock.uptimeMillis() - antes
             izq = r.first
             der = r.second
         }
+        tiempos.cuadros++
         cuadroLento = SystemClock.uptimeMillis() - inicio > 70
         return CuadroCuerpo(puntosPose, izq, der, imagen.width.toFloat() / imagen.height)
     }
@@ -94,13 +194,24 @@ class Detectores(private val context: Context, palabras: Boolean) : AutoCloseabl
         val hombros = hypot(((pose[11].x - pose[12].x) * ancho).toDouble(), ((pose[11].y - pose[12].y) * alto).toDouble())
         if (hombros < 8) return izq to der
         val alturaHombros = (pose[11].y + pose[12].y) / 2.0 * alto
-        val tareas = mutableMapOf<Int, java.util.concurrent.Future<List<Punto>?>>()
+        val tareas = mutableMapOf<Int, Future<List<Punto>?>>()
         for ((lado, datos) in listOf(Triple(izq, MANO_POSE_IZQ, der), Triple(der, MANO_POSE_DER, izq)).withIndex()) {
             val (mano, puntos, otra) = datos
-            if (mano != null || pose[puntos[0]].y * alto > alturaHombros + 1.2 * hombros) continue  // detectada o en reposo
-            tareas[lado] = hilos.submit(Callable { buscarEnRecorte(recuperadores[lado], imagen, pose, puntos, otra, hombros) })
+            if (mano != null || pose[puntos[0]].y * alto > alturaHombros + 1.2 * hombros) {  // detectada o en reposo
+                esperaRecuperar[lado] = 0
+                continue
+            }
+            if (esperaRecuperar[lado] > 0) {  // se buscó hace poco y no estaba
+                esperaRecuperar[lado]--
+                continue
+            }
+            val recuperador = recuperadoresPerezosos.value[lado]
+            tiempos.recuperaciones++
+            tareas[lado] = hilos.submit(Callable { buscarEnRecorte(recuperador, imagen, pose, puntos, otra, hombros) })
         }
-        return (tareas[0]?.get() ?: izq) to (tareas[1]?.get() ?: der)
+        val resultado = (tareas[0]?.get() ?: izq) to (tareas[1]?.get() ?: der)
+        for ((lado, tarea) in tareas) if (tarea.get() == null) esperaRecuperar[lado] = 2
+        return resultado
     }
 
     private fun buscarEnRecorte(detector: HandLandmarker, imagen: Bitmap, pose: List<Punto>, puntos: IntArray,
@@ -140,10 +251,10 @@ class Detectores(private val context: Context, palabras: Boolean) : AutoCloseabl
     }
 
     override fun close() {
-        manoLetras.close()
-        manosPalabras?.close()
-        pose?.close()
-        recuperadores.forEach { it.close() }
+        if (manoLetrasPerezosa.isInitialized()) manoLetrasPerezosa.value.close()
+        if (manosPalabrasPerezosa.isInitialized()) manosPalabrasPerezosa.value.close()
+        if (posePerezosa.isInitialized()) posePerezosa.value.close()
+        if (recuperadoresPerezosos.isInitialized()) recuperadoresPerezosos.value.forEach { it.close() }
         hilos.shutdown()
     }
 }

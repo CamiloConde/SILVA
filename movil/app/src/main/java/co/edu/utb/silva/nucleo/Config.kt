@@ -33,6 +33,16 @@ object Config {
     const val SEGUNDOS_SUGERENCIA = 6.0
     const val CUADROS_REPETICION = 20
 
+    // El segmentador de Palabras mide en segundos (silva.palabras): los valores en cuadros de arriba se
+    // calibraron a 30 cuadros/s y el teléfono procesa 10-20
+    const val FPS_REFERENCIA = 30.0
+    const val SEGUNDOS_MIN_ACTIVOS = MIN_ACTIVOS / FPS_REFERENCIA
+    const val SEGUNDOS_FIN = CUADROS_FIN / FPS_REFERENCIA
+    const val SEGUNDOS_MAX = (MAX_CUADROS - 1) / FPS_REFERENCIA
+    const val SEGUNDOS_MARGEN = MARGEN / FPS_REFERENCIA
+    const val VELOCIDAD_ACTIVA = MOVIMIENTO_ACTIVO * FPS_REFERENCIA  // anchos de hombro por segundo
+    const val SEGUNDOS_REPETICION = 0.4  // pausa entre la palabra escrita y la siguiente seña (silva.controlador)
+
     // Recuperación de la mano perdida
     const val RECORTE_RECUPERACION = 1.8
     const val TAM_RECORTE = 256

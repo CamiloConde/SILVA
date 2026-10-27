@@ -12,33 +12,56 @@ import co.edu.utb.silva.nucleo.ClasificadorPalabras
 import co.edu.utb.silva.nucleo.Sugerencias
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Modelos de la app (assets/modelos, generados por scripts/exportar_movil.py). */
+/** Modelos de la app (assets/modelos, generados por scripts/exportar_movil.py), o un modelo propio importado. */
 class Modelos(
     val letras: ClasificadorLetras,
     val movimiento: ClasificadorMovimiento,
     val palabras: ClasificadorPalabras,
     val animaciones: Animaciones,
     val sugerencias: Sugerencias,
+    val origen: String?,  // null = el modelo original; si no, de dónde salió el modelo propio importado
 ) {
     companion object {
-        fun cargar(context: Context): Modelos {
+        /**
+         * Carga los modelos. Los tres clasificadores salen de `propio` (al importar un paquete) o de
+         * files/modelo_propio si se importó uno; si no, de los assets. Un modelo propio que no carga se
+         * descarta y se usa el original.
+         */
+        fun cargar(context: Context, propio: ((String) -> ByteArray?)? = null): Modelos {
+            val carpeta = Muestras.carpetaModeloPropio(context)
+            val buscar = propio ?: { nombre: String -> File(carpeta, nombre).takeIf { it.exists() }?.readBytes() }
+            return try {
+                construir(context, buscar)
+            } catch (e: Exception) {
+                if (propio != null) throw e
+                android.util.Log.e("SILVA", "El modelo propio no carga; se usa el original", e)
+                Muestras.quitarModeloPropio(context)
+                construir(context) { null }
+            }
+        }
+
+        private fun construir(context: Context, propio: (String) -> ByteArray?): Modelos {
             fun leer(nombre: String) = context.assets.open("modelos/$nombre").use { it.readBytes() }
+            fun modelo(nombre: String) = propio(nombre) ?: leer(nombre)
             fun JSONArray.textos() = List(length()) { getString(it) }
-            val indice = JSONObject(String(leer("modelos.json"), Charsets.UTF_8))
+            val original = JSONObject(String(leer("modelos.json"), Charsets.UTF_8))
+            val indice = JSONObject(String(modelo("modelos.json"), Charsets.UTF_8))
             val p = indice.getJSONObject("palabras")
             val n = p.getJSONObject("nombres")
             return Modelos(
-                ClasificadorLetras(Bosque(leer("letras.bin")), indice.getJSONObject("letras").getJSONArray("clases").textos()),
-                ClasificadorMovimiento(Bosque(leer("letras_movimiento.bin")),
+                ClasificadorLetras(Bosque(modelo("letras.bin")), indice.getJSONObject("letras").getJSONArray("clases").textos()),
+                ClasificadorMovimiento(Bosque(modelo("letras_movimiento.bin")),
                     indice.getJSONObject("letras_movimiento").getJSONArray("clases").textos()),
-                ClasificadorPalabras(Bosque(leer("palabras.bin")), p.getJSONArray("clases").textos(),
+                ClasificadorPalabras(Bosque(modelo("palabras.bin")), p.getJSONArray("clases").textos(),
                     n.keys().asSequence().associateWith { n.getString(it) }, p.getDouble("umbral"), p.getDouble("umbral_sugerencia")),
-                Animaciones(leer("animaciones.bin"), indice.getJSONArray("animaciones").textos()),
+                Animaciones(leer("animaciones.bin"), original.getJSONArray("animaciones").textos()),
                 Sugerencias(String(leer("palabras_es.txt"), Charsets.UTF_8).lines()),
+                if (propio("modelos.json") == null) null else indice.optString("origen", "modelo propio"),
             )
         }
     }

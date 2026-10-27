@@ -8,12 +8,39 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
+import android.widget.FrameLayout
+import androidx.camera.view.PreviewView
 import co.edu.utb.silva.nucleo.CONEXIONES_MANO
 import co.edu.utb.silva.nucleo.Config
 import co.edu.utb.silva.nucleo.MANO_POSE_DER
 import co.edu.utb.silva.nucleo.MANO_POSE_IZQ
 import co.edu.utb.silva.nucleo.POSE_CONEXIONES
 import co.edu.utb.silva.nucleo.Punto
+
+/**
+ * Lo que se ve de la cámara: el video de CameraX (fluido, a la velocidad de la cámara) y encima VistaCamara
+ * con lo reconocido. Las dos escalan la imagen igual: llenando el recuadro (rellenar) o completa.
+ */
+class PantallaCamara(context: Context) : FrameLayout(context) {
+    val previa = PreviewView(context).apply {
+        implementationMode = PreviewView.ImplementationMode.COMPATIBLE  // se puede mover entre pantallas y recortar
+        setBackgroundColor(Color.rgb(0x16, 0x18, 0x1D))
+    }
+    val vista = VistaCamara(context)
+
+    init {
+        addView(previa, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(vista, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    var rellenar: Boolean
+        get() = vista.rellenar
+        set(valor) {
+            vista.rellenar = valor
+            previa.scaleType = if (valor) PreviewView.ScaleType.FILL_CENTER else PreviewView.ScaleType.FIT_CENTER
+            vista.invalidate()
+        }
+}
 
 /**
  * Video sobre fondo tinta con el esqueleto discreto (líneas claras, puntos blancos) y, según el modo,
@@ -25,6 +52,7 @@ class VistaCamara(context: Context) : View(context) {
     var guia: String? = null  // "ok" | "ajustar" | null
     var recuadro = false
     var rellenar = false  // Deletreo: la imagen llena el recuadro (solo importa la mano); Palabras: se ve completa
+    var sobreVideo = false  // el video lo muestra la vista previa de CameraX que está debajo: aquí solo las capas
 
     private val densidad = resources.displayMetrics.density
     private val lineaMano = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(200, 203, 205); strokeWidth = 2f * densidad }
@@ -55,8 +83,9 @@ class VistaCamara(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         canvas.clipRect(0, 0, width, height)  // nada se sale de la vista (la imagen ampliada de Deletreo)
-        canvas.drawColor(Color.rgb(0x16, 0x18, 0x1D))
-        val f = fotograma ?: return
+        val f = fotograma
+        if (f == null || !sobreVideo) canvas.drawColor(Color.rgb(0x16, 0x18, 0x1D))  // sin cámara: tapa el video
+        if (f == null) return
         val img = f.imagen
         val escala = if (rellenar) maxOf(width.toFloat() / img.width, height.toFloat() / img.height)
             else minOf(width.toFloat() / img.width, height.toFloat() / img.height)
@@ -66,7 +95,7 @@ class VistaCamara(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(destino)  // el esqueleto no se dibuja fuera de la imagen
         if (espejo) canvas.scale(-1f, 1f, width / 2f, height / 2f)
-        canvas.drawBitmap(img, null, destino, imagen)
+        if (!sobreVideo) canvas.drawBitmap(img, null, destino, imagen)
         fun px(p: Punto) = destino.left + p.x * w
         fun py(p: Punto) = destino.top + p.y * h
 

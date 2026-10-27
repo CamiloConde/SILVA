@@ -36,6 +36,11 @@ data class Resultado(
     val cuerpo: CuadroCuerpo? = null,  // Palabras
     val grabandoSena: Boolean = false,
     val pendiente: PalabraPendiente? = null,
+    // al entrenar: lo que se guarda como muestra
+    val senaTerminada: List<FloatArray>? = null,  // Palabras: la seña completa (vectores de 100 valores)
+    val vectorLetra: FloatArray? = null,  // Deletreo: los 42 valores que recibe el modelo de letras
+    val puntosIsotropicos: Array<FloatArray>? = null,  // Deletreo: la mano en unidades iguales en x e y
+    val trazo: TrazoTerminado? = null,  // Deletreo: un trazo terminado
 )
 
 /**
@@ -57,10 +62,23 @@ class Motor(
     var ultimaConfianza: Double? = null
         private set
 
+    /**
+     * Al entrenar (grabar muestras) se reconoce igual, para mostrar qué entiende el modelo, pero no se
+     * escribe nada ni se sugiere: cada seña o trazo terminado se entrega en el Resultado para guardarlo.
+     */
+    var entrenando = false
+        set(valor) {
+            field = valor
+            segmentador.reiniciar()
+            segmentadorLetras.reiniciar()
+            buffer.reiniciarDeteccion()
+            pendiente = null
+        }
+
     private val segmentador = SegmentadorSenas()
     private val segmentadorLetras = SegmentadorLetras()
     private var ultimaPalabra: String? = null
-    private var cuadrosDesdePalabra = 0
+    private var tPalabra = Double.NEGATIVE_INFINITY  // cuándo se escribió (o sugirió) la última palabra
     private var tEstatica: Double? = null
     private var tInicioTrazo: Double? = null
 
@@ -90,6 +108,7 @@ class Motor(
 
     // ------------------------------------------------------------------ Deletreo
     fun procesarLetras(mano: ManoDetectada?, ancho: Int, alto: Int): Resultado {
+        if (entrenando) return letrasAlEntrenar(mano, ancho, alto)
         val ahora = reloj()
         var prediccion = mano?.let { clasificadorLetras.predecir(normalizarLandmarks(como4x3(it.puntos, ancho, alto), it.izquierda)) }
         var confirmada: String? = null
@@ -109,6 +128,17 @@ class Motor(
         }
         return Resultado(prediccion, confirmada, buffer.texto, buffer.progreso, ahora, mano = mano,
             trazando = segmentadorLetras.moviendo)
+    }
+
+    private fun letrasAlEntrenar(mano: ManoDetectada?, ancho: Int, alto: Int): Resultado {
+        val ahora = reloj()
+        val vector = mano?.let { normalizarLandmarks(como4x3(it.puntos, ancho, alto), it.izquierda) }
+        val iso = mano?.let { aIsotropicas(it.puntos, ancho, alto) }
+        var prediccion = vector?.let { clasificadorLetras.predecir(it) }
+        val trazo = segmentadorLetras.agregar(iso, mano?.izquierda ?: false)
+        if (trazo != null) clasificadorMovimiento?.let { prediccion = it.predecir(trazo) }
+        return Resultado(prediccion, null, buffer.texto, 0.0, ahora, mano = mano, trazando = segmentadorLetras.moviendo,
+            vectorLetra = vector, puntosIsotropicos = iso, trazo = trazo)
     }
 
     private fun seguirTrazo(mano: ManoDetectada?, ancho: Int, alto: Int, estatica: Prediccion?, ahora: Double): Prediccion? {
@@ -134,8 +164,14 @@ class Motor(
     fun procesarPalabras(cuadro: CuadroCuerpo): Resultado {
         val clasificador = clasificadorPalabras ?: error("Falta el modelo de palabras")
         val ahora = reloj()
-        val estado = segmentador.agregar(caracteristicasCuadro(cuadro))
-        cuadrosDesdePalabra++
+        val estado = segmentador.agregar(caracteristicasCuadro(cuadro), ahora)
+        if (entrenando) {
+            val terminada = estado.terminada
+            val p = terminada?.let { clasificador.evaluar(it).mejor }
+            val progreso = if (estado.grabando) minOf(estado.segundos / Config.SEGUNDOS_MAX, 1.0) else 0.0
+            return Resultado(p, null, buffer.texto, progreso, ahora, cuerpo = cuadro, grabandoSena = estado.grabando,
+                senaTerminada = terminada)
+        }
         var confirmada: String? = null
         pendiente?.let { if (estado.grabando || ahora >= it.vence) cerrarPendiente() }
 
@@ -144,7 +180,8 @@ class Motor(
         if (terminada != null) {
             val ev = clasificador.evaluar(terminada)
             prediccion = ev.mejor
-            val repetida = prediccion.texto == ultimaPalabra && cuadrosDesdePalabra - terminada.size < Config.CUADROS_REPETICION
+            val inicio = estado.inicio
+            val repetida = prediccion.texto == ultimaPalabra && inicio != null && inicio - tPalabra < Config.SEGUNDOS_REPETICION
             val segura = prediccion.confianza >= clasificador.umbral && prediccion.confianza >= ev.probOtra
             val dudosa = prediccion.confianza >= clasificador.umbralSugerencia && prediccion.confianza >= 0.5 * ev.probOtra
             if (!repetida && (segura || dudosa)) {
@@ -156,10 +193,10 @@ class Motor(
                 val plazo = if (segura) Config.SEGUNDOS_CORRECCION else Config.SEGUNDOS_SUGERENCIA
                 pendiente = PalabraPendiente(ev.opciones.take(3), segura, ahora, ahora + plazo)
                 ultimaPalabra = prediccion.texto
-                cuadrosDesdePalabra = 0
+                tPalabra = ahora
             }
         }
-        val progreso = if (estado.grabando) minOf(estado.cuadros.toDouble() / Config.MAX_CUADROS, 1.0) else 0.0
+        val progreso = if (estado.grabando) minOf(estado.segundos / Config.SEGUNDOS_MAX, 1.0) else 0.0
         return Resultado(prediccion, confirmada, buffer.texto, progreso, ahora, cuerpo = cuadro,
             grabandoSena = estado.grabando, pendiente = pendiente)
     }

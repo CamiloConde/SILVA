@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -59,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -97,11 +99,13 @@ import co.edu.utb.silva.nucleo.Animaciones
 import co.edu.utb.silva.nucleo.CONEXIONES_MANO
 import co.edu.utb.silva.nucleo.LETRAS
 import co.edu.utb.silva.nucleo.LETRAS_MOVIMIENTO
+import co.edu.utb.silva.nucleo.LETRAS_ESTATICAS
 import co.edu.utb.silva.nucleo.Modo
 import co.edu.utb.silva.nucleo.N_MANO
 import co.edu.utb.silva.nucleo.N_POSE
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // Identidad v2 (propuesta de diseño)
@@ -134,10 +138,15 @@ class MainActivity : ComponentActivity() {
                 var cargado by remember { mutableStateOf<Estado?>(null) }
                 LaunchedEffect(Unit) {
                     val modelos = withContext(Dispatchers.Default) { Modelos.cargar(applicationContext) }
-                    cargado = Estado(this@MainActivity, modelos).also { estado = it }
-                    // modo de prueba: después de crear los detectores de la app (MediaPipe no tolera crear dos a la vez)
+                    // versión de desarrollo: --ez poseGpu / manosCpu / secuencial true cambian dónde corre MediaPipe (para medir)
                     val depuracion = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
-                    if (depuracion && intent.getBooleanExtra("prueba", false)) Prueba.ejecutar(applicationContext, modelos)
+                    val aceleracion = if (!depuracion) Aceleracion() else Aceleracion(
+                        gpuPose = intent.getBooleanExtra("poseGpu", false),
+                        gpuManos = !intent.getBooleanExtra("manosCpu", false),
+                        paralelo = !intent.getBooleanExtra("secuencial", false))
+                    cargado = Estado(this@MainActivity, modelos, aceleracion).also { estado = it }
+                    // modo de prueba: después de crear los detectores de la app (MediaPipe no tolera crear dos a la vez)
+                    if (depuracion && intent.getBooleanExtra("prueba", false)) Prueba.ejecutar(applicationContext, modelos, aceleracion)
                 }
                 val e = cargado
                 if (e == null) PantallaDeCarga() else App(e, this)
@@ -235,6 +244,11 @@ private fun App(e: Estado, actividad: ComponentActivity) {
                     },
                     verSenas = { verSena = it })
                 Pantalla.HISTORIAL -> PantallaHistorial(e.historial)
+                Pantalla.ENTRENAR -> PantallaEntrenar(e, actividad,
+                    encender = {
+                        if (tiene(Manifest.permission.CAMERA)) e.iniciar(actividad)
+                        else permisoCamara.launch(Manifest.permission.CAMERA)
+                    })
             }
         }
         if (!teclado && !completa) BarraInferior(e.pantalla) { e.irA(it, actividad) }
@@ -278,7 +292,7 @@ private fun Pestana(texto: String, activa: Boolean, alPulsar: () -> Unit) {
 private fun BarraInferior(actual: Pantalla, alElegir: (Pantalla) -> Unit) {
     Row(Modifier.fillMaxWidth().height(60.dp).background(BLANCO).borde(arriba = true)) {
         for ((p, nombre) in listOf(Pantalla.TRADUCIR to "Señas a texto", Pantalla.TEXTO_A_SENAS to "Texto a señas",
-                Pantalla.CONVERSAR to "Conversar", Pantalla.HISTORIAL to "Historial")) {
+                Pantalla.CONVERSAR to "Conversar", Pantalla.HISTORIAL to "Historial", Pantalla.ENTRENAR to "Entrenar")) {
             val activa = p == actual
             Box(Modifier.weight(1f).fillMaxHeight().clickable { alElegir(p) }
                 .drawBehind { if (activa) drawRect(AZUL, Offset.Zero, Size(size.width, 3.dp.toPx())) },
@@ -293,7 +307,7 @@ private fun BarraInferior(actual: Pantalla, alElegir: (Pantalla) -> Unit) {
 // ---------------------------------------------------------------------- Traducir (propuesta, página 3)
 /**
  * La cámara con sus capas: cambiar de cámara, pantalla completa, estado, avisos y la palabra por corregir.
- * La misma VistaCamara se muestra en la pantalla normal y en la completa: al pasar de una a otra se
+ * La misma PantallaCamara (video y capas) se muestra en la pantalla normal y en la completa: al pasar de una a otra se
  * desprende de la anterior antes de agregarla a la nueva.
  */
 @Composable
@@ -301,8 +315,8 @@ private fun CamaraConCapas(e: Estado, actividad: ComponentActivity, modifier: Mo
     val completa = e.maximizado
     Box(modifier.clipToBounds().background(TINTA)) {
         AndroidView(factory = {
-            (e.vista.parent as? ViewGroup)?.removeView(e.vista)
-            e.vista
+            (e.pantallaCamara.parent as? ViewGroup)?.removeView(e.pantallaCamara)
+            e.pantallaCamara
         }, modifier = Modifier.fillMaxSize(), update = { it.rellenar = !completa })
         if (!e.activo) T("Presiona «Iniciar» para encender la cámara", 15.sp, APAGADO,
             alinear = TextAlign.Center, modifier = Modifier.align(Alignment.Center).padding(24.dp))
@@ -312,14 +326,19 @@ private fun CamaraConCapas(e: Estado, actividad: ComponentActivity, modifier: Mo
             T(if (e.frontal) "Cámara frontal" else "Cámara trasera", 13.sp, PAPEL, FontWeight.Medium, subrayado = true,
                 modifier = Modifier.clickable { e.cambiarCamara(actividad) }.padding(8.dp))
         }
-        if (e.activo) Row(Modifier.align(Alignment.TopEnd).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        // en su propia línea, bajo los enlaces: en un teléfono angosto no caben en la misma
+        if (e.activo) Row(Modifier.align(Alignment.TopEnd).padding(top = 44.dp, end = 10.dp)
+            .background(Color(0x9916181D), RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(7.dp).background(if (e.leyendo) OCRE else AZUL, RoundedCornerShape(50)))
             Spacer(Modifier.width(6.dp))
-            T((if (e.leyendo) "leyendo seña" else "en vivo") + " · ${e.fps.toInt()} fps", 12.sp, PAPEL, FontWeight.Medium)
+            T((if (e.leyendo) "leyendo seña" else "en vivo") + " · ${e.fps} fps", 12.sp, PAPEL, FontWeight.Medium)
+            // dónde corre MediaPipe: «CPU» sola quiere decir que el teléfono no pudo usar la GPU (va más lento)
+            if (e.aceleracion.isNotEmpty()) T(" · ${e.aceleracion}", 11.sp, APAGADO)
         }
         e.banda?.let { aviso ->
             Row(Modifier.align(if (e.pendiente != null) Alignment.TopStart else Alignment.BottomStart)
-                .padding(start = 10.dp, end = 10.dp, top = if (e.pendiente != null) 44.dp else 10.dp, bottom = 10.dp)
+                .padding(start = 10.dp, end = 10.dp, top = if (e.pendiente != null) 72.dp else 10.dp, bottom = 10.dp)
                 .background(Color(0xE616181D), RoundedCornerShape(4.dp))) {
                 Box(Modifier.width(3.dp).heightIn(min = 34.dp).background(OCRE))
                 T(aviso, 12.sp, PAPEL, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp))
@@ -624,6 +643,174 @@ private fun PantallaHistorial(historial: Historial) {
                     T(t, 17.sp)
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------- Entrenar
+/**
+ * Grabar muestras propias (solo los puntos de cuerpo y manos) para reentrenar los modelos en el PC con
+ * scripts/entrenar_con_muestras.py, e importar el modelo que resulta.
+ */
+@Composable
+private fun PantallaEntrenar(e: Estado, actividad: ComponentActivity, encender: () -> Unit) {
+    val palabras = e.modo == Modo.PALABRAS
+    val claves = if (palabras) e.modelos.palabras.claves.sortedBy { e.modelos.palabras.nombre(it) } else LETRAS
+    var verOpciones by remember { mutableStateOf(false) }
+    var ocupado by remember { mutableStateOf<String?>(null) }
+    val alcance = rememberCoroutineScope()
+    fun exportar(compartir: Boolean) {
+        ocupado = "Preparando el archivo…"
+        alcance.launch {
+            val (archivo, guardado) = withContext(Dispatchers.IO) {
+                val f = e.muestras.exportar()
+                f to (if (compartir) null else e.muestras.guardarEnDescargas(f))
+            }
+            ocupado = null
+            if (compartir || guardado == null) actividad.startActivity(e.muestras.compartir(archivo))
+            else e.error = "Listo: ${e.totalMuestras} muestras en $guardado. Pásalo al PC (por cable o por Drive) y ejecuta " +
+                "scripts/entrenar_con_muestras.py con ese archivo."
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().height(58.dp).padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            T("Entrenar", 20.sp, peso = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            for ((m, nombre) in listOf(Modo.PALABRAS to "Palabras", Modo.LETRAS to "Deletreo")) {
+                Pestana(nombre, e.modo == m) { e.cambiarModoEntrenar(m) }
+            }
+        }
+        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
+            OutlinedTextField(e.persona, { e.ponerPersona(it) }, Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                singleLine = true, label = { T("¿Quién graba? (nombre o apodo)", 13.sp, GRAFITO) },
+                textStyle = TextStyle(fontFamily = PLEX, fontSize = 16.sp, color = TINTA), shape = RoundedCornerShape(6.dp),
+                colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = BORDE_BOTON, focusedBorderColor = AZUL,
+                    unfocusedContainerColor = BLANCO, focusedContainerColor = BLANCO, cursorColor = AZUL),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done))
+            Spacer(Modifier.height(10.dp))
+            Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(TINTA)) {
+                AndroidView(factory = {
+                    (e.pantallaCamara.parent as? ViewGroup)?.removeView(e.pantallaCamara)
+                    e.pantallaCamara
+                }, modifier = Modifier.fillMaxSize(), update = { it.rellenar = true })
+                if (!e.activo) T("La cámara se enciende al tocar «Grabar».", 15.sp, APAGADO, alinear = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp))
+                T(if (e.frontal) "Cámara frontal" else "Cámara trasera", 13.sp, PAPEL, FontWeight.Medium, subrayado = true,
+                    modifier = Modifier.align(Alignment.TopStart).clickable { e.cambiarCamara(actividad) }.padding(12.dp))
+                if (e.activo) Row(Modifier.align(Alignment.TopEnd).padding(10.dp)
+                    .background(Color(0x9916181D), RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).background(if (e.grabandoMuestras) Color(0xFFD93025) else AZUL, RoundedCornerShape(50)))
+                    Spacer(Modifier.width(6.dp))
+                    T((if (e.grabandoMuestras) "grabando" else "en vivo") + " · ${e.fps} fps", 12.sp, PAPEL, FontWeight.Medium)
+                }
+                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(10.dp)) {
+                    e.banda?.let { aviso ->
+                        T(aviso, 12.sp, PAPEL, modifier = Modifier.background(Color(0xE616181D), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp))
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    if (e.activo) Row(Modifier.background(Color(0xE616181D), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        T("El modelo ve: ", 12.sp, APAGADO)
+                        T(e.detectado, 14.sp, PAPEL, FontWeight.SemiBold)
+                        e.confianza?.let { T(" · ${(it * 100).toInt()} %", 12.sp, APAGADO) }
+                    }
+                    if (e.grabandoMuestras && e.objetivo?.let { e.tipoMuestra(it) } == TipoMuestra.LETRA) {
+                        Spacer(Modifier.height(6.dp))
+                        Box(Modifier.fillMaxWidth().height(6.dp).background(Color(0xFF34373F))) {
+                            Box(Modifier.fillMaxWidth(e.progresoToma.coerceIn(0f, 1f)).height(6.dp).background(OCRE))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(claves) { clave ->
+                    val elegida = clave == e.objetivo
+                    val n = e.cuantas(clave)
+                    val trazo = !palabras && clave !in LETRAS_ESTATICAS
+                    Row(Modifier.clip(RoundedCornerShape(18.dp)).background(if (elegida) AZUL else BLANCO)
+                        .border(1.dp, if (elegida) AZUL else BORDE_BOTON, RoundedCornerShape(18.dp))
+                        .clickable { e.elegirObjetivo(clave) }.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        T(e.nombreObjetivo(clave) + if (trazo) " ↝" else "", 15.sp, if (elegida) BLANCO else TINTA, FontWeight.Medium)
+                        if (n > 0) T("  $n", 13.sp, if (elegida) Color(0xFFC9D6FA) else AZUL, FontWeight.SemiBold)
+                    }
+                }
+            }
+            T(ocupado ?: e.avisoEntrenar.ifEmpty { if (palabras) "Elige una palabra para grabarla." else "Elige una letra para grabarla." },
+                14.sp, GRAFITO, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(top = 8.dp), maxLineas = 3)
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BotonClaro("Borrar última", Modifier.weight(1f), e.totalMuestras > 0 && !e.grabandoMuestras) { e.borrarUltimaMuestra() }
+                BotonTinta(if (e.grabandoMuestras) "Detener" else "Grabar", Modifier.weight(1f)) {
+                    if (e.alternarGrabacion() && e.grabandoMuestras && !e.activo) encender()
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                T("${e.totalMuestras} muestras", 13.sp, GRAFITO)
+                Spacer(Modifier.weight(1f))
+                val hay = e.totalMuestras > 0 && ocupado == null
+                T("Exportar", 15.sp, if (hay) AZUL else APAGADO,
+                    modifier = Modifier.clickable(enabled = hay) { exportar(false) }.padding(8.dp))
+                T("Compartir", 15.sp, if (hay) AZUL else APAGADO,
+                    modifier = Modifier.clickable(enabled = hay) { exportar(true) }.padding(8.dp))
+                T("Más…", 15.sp, AZUL, modifier = Modifier.clickable { verOpciones = true }.padding(8.dp))
+            }
+        }
+    }
+    if (verOpciones) DialogoEntrenar(e, actividad) { verOpciones = false }
+}
+
+/** Cómo se usan las muestras, importar el modelo entrenado en el PC y borrar las muestras. */
+@Composable
+private fun DialogoEntrenar(e: Estado, actividad: ComponentActivity, alCerrar: () -> Unit) {
+    var confirmarBorrado by remember { mutableStateOf(false) }
+    var importando by remember { mutableStateOf(false) }
+    val alcance = rememberCoroutineScope()
+    val importar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importando = true
+        alcance.launch {
+            val falla = withContext(Dispatchers.IO) { Muestras.importarModelo(actividad, uri) }
+            importando = false
+            if (falla != null) e.error = falla else actividad.recreate()  // se vuelve a abrir con el modelo nuevo
+        }
+    }
+    Dialog(onDismissRequest = alCerrar) {
+        Column(Modifier.widthIn(max = 560.dp).background(BLANCO, RoundedCornerShape(8.dp)).padding(20.dp)
+            .verticalScroll(rememberScrollState())) {
+            T("Entrenar el modelo con sus señas", 17.sp, peso = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            T("1. Graben cada seña unas 5 veces por persona; mejor varias personas y lugares, con el teléfono como lo " +
+                "van a usar. Solo se guardan los puntos del cuerpo y las manos, nunca la imagen.\n" +
+                "2. «Exportar» deja el archivo en Descargas/SILVA. Pásalo al PC.\n" +
+                "3. En el PC, en la carpeta de SILVA:\n    python scripts/entrenar_con_muestras.py <archivo>\n" +
+                "   Reentrena los tres modelos, mide si mejoran y crea dist/silva_modelo_<fecha>.zip.\n" +
+                "4. Pasa ese .zip al teléfono e impórtalo aquí.", 14.sp, GRAFITO)
+            Spacer(Modifier.height(14.dp))
+            T("Modelo en uso: " + (e.modelos.origen ?: "el original de SILVA"), 14.sp, TINTA, FontWeight.Medium)
+            Spacer(Modifier.height(8.dp))
+            BotonTinta(if (importando) "Importando…" else "Importar modelo (.zip)", Modifier.fillMaxWidth()) {
+                if (!importando) importar.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+            }
+            if (e.modelos.origen != null) {
+                Spacer(Modifier.height(8.dp))
+                BotonClaro("Volver al modelo original", Modifier.fillMaxWidth()) {
+                    Muestras.quitarModeloPropio(actividad)
+                    actividad.recreate()
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            BotonClaro(if (confirmarBorrado) "Toca otra vez para borrar ${e.totalMuestras} muestras" else "Borrar todas las muestras",
+                Modifier.fillMaxWidth(), e.totalMuestras > 0) {
+                if (confirmarBorrado) {
+                    e.borrarTodasLasMuestras()
+                    confirmarBorrado = false
+                } else confirmarBorrado = true
+            }
+            TextButton(alCerrar, Modifier.align(Alignment.End)) { T("Cerrar", 15.sp, AZUL, FontWeight.Medium) }
         }
     }
 }

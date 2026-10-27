@@ -15,8 +15,8 @@ android {
         applicationId = "co.edu.utb.silva"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.3.0"
+        versionCode = 2
+        versionName = "1.4.0"
         // Teléfonos actuales (64 bits), los de 32 bits y el emulador
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
     implementation(libs.mediapipe.tasks.vision)
     testImplementation(libs.junit)
     testImplementation(libs.json)
