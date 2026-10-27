@@ -1,4 +1,4 @@
-"""RF-04: confirmar solo con confianza >= 0,80 y 5 cuadros estables."""
+"""RF-04: confirmar solo con confianza >= 0,60 y 5 cuadros estables."""
 
 from silva.buffer_texto import BufferTexto
 from silva.modelo import Prediccion
@@ -17,13 +17,13 @@ def test_confirma_al_quinto_cuadro_estable():
 
 def test_no_confirma_con_confianza_baja():
     b = BufferTexto()
-    alimentar(b, "A", 0.79, 20)
+    alimentar(b, "A", 0.59, 20)
     assert b.texto == ""
 
 
 def test_confianza_exactamente_en_el_umbral_si_cuenta():
     b = BufferTexto()
-    alimentar(b, "A", 0.80, 5)
+    alimentar(b, "A", 0.60, 5)
     assert b.texto == "A"
 
 
@@ -83,3 +83,15 @@ def test_progreso():
     b = BufferTexto()
     alimentar(b, "A", 0.9, 2)
     assert b.progreso == 0.4
+
+
+def test_completar_cambia_la_palabra_en_curso():
+    b = BufferTexto()
+    for letra in "HOLA":
+        b.agregar_letra(letra)
+    b.agregar_espacio()
+    for letra in "MU":
+        b.agregar_letra(letra)
+    assert b.palabra_en_curso == "MU"
+    b.completar("MÚSICA")
+    assert b.texto == "HOLA MÚSICA " and b.palabra_en_curso == ""

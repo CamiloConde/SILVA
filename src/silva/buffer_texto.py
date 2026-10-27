@@ -61,6 +61,40 @@ class BufferTexto:
             return prediccion.letra
         return None
 
+    @property
+    def ultima(self) -> str | None:
+        return self._texto[-1] if self._texto else None
+
+    def pausar(self) -> None:
+        """Interrumpe la letra en curso sin olvidar la bloqueada (p. ej. mientras la mano traza una letra)."""
+        self._reiniciar_racha()
+
+    def agregar_letra(self, letra: str, bloquear: str | None = None) -> None:
+        """Letra con movimiento, ya reconocida. `bloquear`: letra estática que no debe escribirse
+        mientras se sostenga la mano tal como terminó el trazo."""
+        self._texto.append(letra)
+        self._reiniciar_racha()
+        self._bloqueada = bloquear
+
+    @property
+    def palabra_en_curso(self) -> str:
+        """Lo escrito después del último espacio (en Deletreo, las letras de la palabra que se deletrea)."""
+        partes = []
+        for p in reversed(self._texto):
+            if p == " ":
+                break
+            partes.append(p)
+        return "".join(reversed(partes))
+
+    def completar(self, palabra: str) -> None:
+        """«¿Quisiste decir?»: cambia la palabra en curso por `palabra` (letra por letra) y agrega un espacio."""
+        while self._texto and self._texto[-1] != " ":
+            self._texto.pop()
+        self._texto.extend(palabra)
+        self._texto.append(" ")
+        self._reiniciar_racha()
+        self._bloqueada = None
+
     def agregar_palabra(self, palabra: str) -> None:
         """Modo Palabras: agrega la palabra completa como una unidad (Borrar la quita entera)."""
         if self._texto and self._texto[-1] != " ":

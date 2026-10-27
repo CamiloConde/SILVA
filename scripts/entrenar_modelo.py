@@ -136,7 +136,7 @@ def main() -> None:
         r = evaluar_probas(probas[m], np.array(clases), y[m])
         quien = "personas no vistas" if nombre == "lsc70" else "grupos no vistos"
         print(f"[validación cruzada, {nombre}: {quien}] exactitud={r['exactitud']:.3f}  "
-              f"cobertura@0.80={r['cobertura']:.3f}  exactitud@0.80={r['exactitud_aceptadas']:.3f}")
+              f"cobertura@{config.UMBRAL_CONFIANZA:.2f}={r['cobertura']:.3f}  exactitud@{config.UMBRAL_CONFIANZA:.2f}={r['exactitud_aceptadas']:.3f}")
         secciones.append(bloque(f"Validación cruzada (5 pliegues por grupo): muestras de "
                                 f"{NOMBRE_FUENTE.get(nombre, nombre)}, {quien}", r, clases))
 
@@ -146,7 +146,7 @@ def main() -> None:
         Xa, ya = aumentar(X[~m], y[~m], copias, rng)
         r = evaluar_probas(nuevo_modelo(args.arboles).fit(Xa, ya).predict_proba(X[m]), np.array(clases), y[m])
         print(f"[sin datos de '{nombre}', probado con '{nombre}'] exactitud={r['exactitud']:.3f}  "
-              f"cobertura@0.80={r['cobertura']:.3f}")
+              f"cobertura@{config.UMBRAL_CONFIANZA:.2f}={r['cobertura']:.3f}")
         secciones.append(bloque(f"Generalización: modelo SIN {NOMBRE_FUENTE.get(nombre, nombre)}, "
                                 f"probado con {NOMBRE_FUENTE.get(nombre, nombre)}", r, clases))
 

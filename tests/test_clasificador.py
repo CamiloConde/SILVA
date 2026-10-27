@@ -27,7 +27,7 @@ def test_prediccion_valida(clasificador, datos_externos):
 
 def test_acierta_una_muestra_por_letra(clasificador, datos_externos):
     X, y = datos_externos
-    for letra in config.LETRAS_ESTATICAS:
+    for letra in sorted(set(y)):  # JuanPlazas no trae M, N ni P (salen de LSC70)
         i = int(np.flatnonzero(y == letra)[0])
         assert clasificador.predecir(X[i].tolist()).letra == letra
 
