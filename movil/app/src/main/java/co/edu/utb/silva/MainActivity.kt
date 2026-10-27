@@ -72,10 +72,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -96,6 +98,10 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import co.edu.utb.silva.nucleo.Animaciones
+import co.edu.utb.silva.nucleo.GuiasLetras
+import co.edu.utb.silva.nucleo.acercarTrazo
+import co.edu.utb.silva.nucleo.encuadre
+import co.edu.utb.silva.nucleo.manoEn
 import co.edu.utb.silva.nucleo.CONEXIONES_MANO
 import co.edu.utb.silva.nucleo.LETRAS
 import co.edu.utb.silva.nucleo.LETRAS_MOVIMIENTO
@@ -202,6 +208,7 @@ private fun App(e: Estado, actividad: ComponentActivity) {
     var verLista by remember { mutableStateOf(false) }
     var verVocabulario by remember { mutableStateOf(false) }
     var verSena by remember { mutableStateOf<List<String>?>(null) }
+    var verLetra by remember { mutableStateOf<String?>(null) }
     fun tiene(p: String) = ContextCompat.checkSelfPermission(actividad, p) == PackageManager.PERMISSION_GRANTED
     val permisoCamara = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) e.iniciar(actividad) else e.error = "SILVA necesita la cámara para reconocer las señas."
@@ -248,15 +255,19 @@ private fun App(e: Estado, actividad: ComponentActivity) {
                     encender = {
                         if (tiene(Manifest.permission.CAMERA)) e.iniciar(actividad)
                         else permisoCamara.launch(Manifest.permission.CAMERA)
+                    },
+                    verGuia = { clave ->
+                        if (e.modo == Modo.PALABRAS) verSena = listOf(e.nombreObjetivo(clave)) else verLetra = clave
                     })
             }
         }
         if (!teclado && !completa) BarraInferior(e.pantalla) { e.irA(it, actividad) }
     }
 
-    if (verLista) DialogoDisponibles(e, e.modo == Modo.PALABRAS, { verLista = false }) { verSena = listOf(it) }
-    if (verVocabulario) DialogoDisponibles(e, true, { verVocabulario = false }) { verSena = listOf(it) }
+    if (verLista) DialogoDisponibles(e, e.modo == Modo.PALABRAS, { verLista = false }, { verLetra = it }) { verSena = listOf(it) }
+    if (verVocabulario) DialogoDisponibles(e, true, { verVocabulario = false }, { verLetra = it }) { verSena = listOf(it) }
     verSena?.let { DialogoSena(it, e.modelos.animaciones) { verSena = null } }
+    verLetra?.let { l -> e.modelos.guias?.let { DialogoLetra(l, it) { verLetra = null } } }
     e.error?.let { msg ->
         AlertDialog(onDismissRequest = { e.error = null }, containerColor = BLANCO,
             confirmButton = { TextButton({ e.error = null }) { T("Aceptar", color = AZUL, peso = FontWeight.Medium) } },
@@ -546,7 +557,7 @@ private fun PantallaTextoASenas(e: Estado, hablar: () -> Unit, verVocabulario: (
                 keyboardActions = KeyboardActions(onSend = { mostrar() }))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 BotonClaro(if (e.escuchando != null) "Escuchando…" else "Hablar", Modifier.weight(1f), alPulsar = hablar)
-                BotonTinta("Mostrar en señas", Modifier.weight(1f)) { mostrar() }
+                BotonTinta("Ver en señas", Modifier.weight(1f)) { mostrar() }
             }
         }
     }
@@ -653,7 +664,7 @@ private fun PantallaHistorial(historial: Historial) {
  * scripts/entrenar_con_muestras.py, e importar el modelo que resulta.
  */
 @Composable
-private fun PantallaEntrenar(e: Estado, actividad: ComponentActivity, encender: () -> Unit) {
+private fun PantallaEntrenar(e: Estado, actividad: ComponentActivity, encender: () -> Unit, verGuia: (String) -> Unit) {
     val palabras = e.modo == Modo.PALABRAS
     val claves = if (palabras) e.modelos.palabras.claves.sortedBy { e.modelos.palabras.nombre(it) } else LETRAS
     var verOpciones by remember { mutableStateOf(false) }
@@ -740,8 +751,15 @@ private fun PantallaEntrenar(e: Estado, actividad: ComponentActivity, encender: 
                     }
                 }
             }
-            T(ocupado ?: e.avisoEntrenar.ifEmpty { if (palabras) "Elige una palabra para grabarla." else "Elige una letra para grabarla." },
-                14.sp, GRAFITO, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(top = 8.dp), maxLineas = 3)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Top) {
+                T(ocupado ?: e.avisoEntrenar.ifEmpty { if (palabras) "Elige una palabra para grabarla." else "Elige una letra para grabarla." },
+                    14.sp, GRAFITO, modifier = Modifier.weight(1f).heightIn(min = 40.dp), maxLineas = 3)
+                val objetivo = e.objetivo
+                val hayGuia = objetivo != null && (if (palabras) e.nombreObjetivo(objetivo) in e.modelos.animaciones.nombres
+                    else e.modelos.guias?.letras?.contains(objetivo) == true)
+                if (hayGuia) T("Ver cómo\nse hace", 14.sp, AZUL, subrayado = true, alinear = TextAlign.End,
+                    modifier = Modifier.clickable { verGuia(objetivo!!) }.padding(start = 10.dp))
+            }
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 BotonClaro("Borrar última", Modifier.weight(1f), e.totalMuestras > 0 && !e.grabandoMuestras) { e.borrarUltimaMuestra() }
                 BotonTinta(if (e.grabandoMuestras) "Detener" else "Grabar", Modifier.weight(1f)) {
@@ -818,7 +836,8 @@ private fun DialogoEntrenar(e: Estado, actividad: ComponentActivity, alCerrar: (
 // ---------------------------------------------------------------------- diálogos
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DialogoDisponibles(e: Estado, palabras: Boolean, alCerrar: () -> Unit, alVerSena: (String) -> Unit) {
+private fun DialogoDisponibles(e: Estado, palabras: Boolean, alCerrar: () -> Unit, alVerLetra: (String) -> Unit,
+                               alVerSena: (String) -> Unit) {
     Dialog(onDismissRequest = alCerrar) {
         Column(Modifier.widthIn(max = 560.dp).background(BLANCO, RoundedCornerShape(8.dp)).padding(20.dp)) {
             Row {
@@ -837,12 +856,17 @@ private fun DialogoDisponibles(e: Estado, palabras: Boolean, alCerrar: () -> Uni
                             modifier = if (con) Modifier.clickable { alVerSena(w) } else Modifier)
                     }
                 } else {
-                    for (l in LETRAS) T(l, 17.sp, if (l in e.motor.letras) TINTA else APAGADO, FontWeight.Medium)
+                    val guias = e.modelos.guias
+                    for (l in LETRAS) {
+                        val con = guias != null && l in guias.letras
+                        T(l, 19.sp, if (con) AZUL else if (l in e.motor.letras) TINTA else APAGADO, FontWeight.Medium,
+                            subrayado = con, modifier = if (con) Modifier.clickable { alVerLetra(l) }.padding(2.dp) else Modifier)
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
             T(if (palabras) "Empieza con las manos abajo, haz la seña y vuelve a bajarlas. Toca una palabra para ver su seña."
-                else "${LETRAS_MOVIMIENTO.dropLast(1).joinToString(", ")} y ${LETRAS_MOVIMIENTO.last()} se trazan: " +
+                else "Toca una letra para ver cómo se hace. ${LETRAS_MOVIMIENTO.dropLast(1).joinToString(", ")} y ${LETRAS_MOVIMIENTO.last()} se trazan: " +
                     "haz el movimiento y quédate quieto al final.", 13.sp, GRAFITO)
             TextButton(alCerrar, Modifier.align(Alignment.End)) { T("Cerrar", 15.sp, AZUL, FontWeight.Medium) }
         }
@@ -937,11 +961,108 @@ fun AnimacionSena(animaciones: Animaciones, senas: List<String>, modifier: Modif
         Canvas(Modifier.weight(1f).fillMaxWidth()) {
             val cuadros = animaciones.cuadros(nombre)
             val f = cuadros[cuadro.coerceAtMost(cuadros.size - 1)]
-            val escala = minOf(size.width / 4.6f, size.height / 4.6f)
-            val o = Offset(size.width / 2, size.height * 0.44f)
-            dibujarPersona(f) { x, y -> Offset(o.x + x * escala, o.y + y * escala) }
+            // la seña entera cabe en el recuadro (también las que suben las manos o abren los brazos)
+            val (escala, ox, oy) = encuadre(animaciones.caja(nombre), size.width, size.height)
+            clipRect { dibujarPersona(f) { x, y -> Offset(ox + x * escala, oy + y * escala) } }
         }
         T(nombre, 18.sp, peso = FontWeight.SemiBold)
         T(if (senas.size == 1) "SEÑA EN LSC" else "SEÑA ${actual + 1} DE ${senas.size} EN LSC", 10.sp, GRAFITO, familia = PLEX_MONO)
     }
 }
+
+// ---------------------------------------------------------------------- guías de las letras (Deletreo)
+@Composable
+private fun DialogoLetra(letra: String, guias: GuiasLetras, alCerrar: () -> Unit) {
+    Dialog(onDismissRequest = alCerrar) {
+        Column(Modifier.width(320.dp).height(420.dp).background(BLANCO, RoundedCornerShape(8.dp)).padding(14.dp)) {
+            GuiaLetra(guias, letra, Modifier.weight(1f).fillMaxWidth())
+            T("La mano derecha vista de frente, como la verías frente a ti. Imagen de LSC70 (Muñoz Galindez et al., 2024).",
+                11.sp, GRAFITO, modifier = Modifier.padding(top = 8.dp))
+            TextButton(alCerrar, Modifier.align(Alignment.End)) { T("Cerrar", 15.sp, AZUL, FontWeight.Medium) }
+        }
+    }
+}
+
+/** Cómo se hace una letra (silva.animacion.GuiaLetra): la mano en grande y, si se traza, su recorrido. */
+@Composable
+fun GuiaLetra(guias: GuiasLetras, letra: String, modifier: Modifier = Modifier) {
+    val trazo = guias.conTrazo(letra)
+    var cuadro by remember(letra) { mutableIntStateOf(0) }
+    if (trazo) LaunchedEffect(letra) {
+        while (true) {
+            delay(33)
+            cuadro = (cuadro + 1) % 60  // ~1,3 s de trazo y ~0,7 s quieta al final
+        }
+    }
+    Column(modifier.background(BLANCO, RoundedCornerShape(6.dp)).border(1.dp, LINEA, RoundedCornerShape(6.dp)).padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Canvas(Modifier.weight(1f).fillMaxWidth()) {
+            var cuadros = guias.cuadros(letra)
+            if (trazo) {
+                // la mano ocupa buena parte del recuadro; si el recorrido no cabe, se dibuja a escala reducida
+                var ancho = 0f
+                var alto = 0f
+                var mx0 = Float.MAX_VALUE; var mx1 = -Float.MAX_VALUE; var my0 = Float.MAX_VALUE; var my1 = -Float.MAX_VALUE
+                for (c in cuadros) {
+                    for (k in 0 until 21) {
+                        ancho = maxOf(ancho, kotlin.math.abs(c[2 * k] - c[0]))
+                        alto = maxOf(alto, kotlin.math.abs(c[2 * k + 1] - c[1]))
+                    }
+                    mx0 = minOf(mx0, c[0]); mx1 = maxOf(mx1, c[0]); my0 = minOf(my0, c[1]); my1 = maxOf(my1, c[1])
+                }
+                val tamMano = 2 * maxOf(ancho, alto) + 0.7f
+                val escalaMano = 0.62f * minOf(size.width, size.height) / tamMano
+                val libreX = size.width - tamMano * escalaMano
+                val libreY = size.height - tamMano * escalaMano
+                val factor = minOf(1f, libreX / maxOf((mx1 - mx0) * escalaMano, 1e-6f), libreY / maxOf((my1 - my0) * escalaMano, 1e-6f))
+                cuadros = acercarTrazo(cuadros, maxOf(factor, 0.15f))
+            }
+            val caja = floatArrayOf(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
+            for (c in cuadros) for (k in 0 until 21) {
+                caja[0] = minOf(caja[0], c[2 * k] - 0.35f); caja[1] = minOf(caja[1], c[2 * k + 1] - 0.35f)
+                caja[2] = maxOf(caja[2], c[2 * k] + 0.35f); caja[3] = maxOf(caja[3], c[2 * k + 1] + 0.35f)
+            }
+            val (escala, ox, oy) = encuadre(caja, size.width, size.height)
+            fun p(x: Float, y: Float) = Offset(ox + x * escala, oy + y * escala)
+            val mano = if (trazo) {
+                val t = minOf(cuadro / 40f, 1f)
+                // recorrido completo (punteado) y lo que ya se hizo (continuo), en la punta del índice
+                val camino = Path()
+                val hecho = Path()
+                for (k in 0..30) {
+                    val a = manoEn(cuadros, k / 30f)
+                    val b = manoEn(cuadros, k / 30f * t)
+                    if (k == 0) { camino.moveTo(p(a[16], a[17]).x, p(a[16], a[17]).y); hecho.moveTo(p(b[16], b[17]).x, p(b[16], b[17]).y) }
+                    else { camino.lineTo(p(a[16], a[17]).x, p(a[16], a[17]).y); hecho.lineTo(p(b[16], b[17]).x, p(b[16], b[17]).y) }
+                }
+                drawPath(camino, AZUL, style = Stroke(maxOf(escala * 0.06f, 3f), cap = StrokeCap.Round,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))))
+                drawPath(hecho, AZUL, style = Stroke(maxOf(escala * 0.09f, 4f), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                manoEn(cuadros, t)
+            } else cuadros[cuadros.size / 2]
+            dibujarManoGuia(mano, escala) { x, y -> p(x, y) }
+        }
+        T(letra, 30.sp, peso = FontWeight.Bold)
+        T(if (trazo) "SE TRAZA · LÍNEA AZUL" else "SE SOSTIENE QUIETA", 10.sp, GRAFITO, familia = PLEX_MONO)
+    }
+}
+
+/** Una mano grande (palma y dedos con contorno); uñas en los dedos estirados, para ver hacia dónde apuntan. */
+private fun DrawScope.dibujarManoGuia(m: FloatArray, escala: Float, p: (Float, Float) -> Offset) {
+    fun q(k: Int) = p(m[2 * k], m[2 * k + 1])
+    fun linea(puntos: List<Offset>) = Path().apply { moveTo(puntos[0].x, puntos[0].y); puntos.drop(1).forEach { lineTo(it.x, it.y) } }
+    val dedo = maxOf(0.24f * escala, 6f)
+    val contorno = linea(listOf(0, 1, 5, 9, 13, 17).map { q(it) }).apply { close() }
+    for ((color, grosor) in listOf(PIEL_BORDE to dedo * 1.25f, PIEL to dedo)) {
+        drawPath(contorno, color)
+        drawPath(contorno, color, style = Stroke(grosor, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        for (d in DEDOS) drawPath(linea(d.map { q(it) }), color, style = Stroke(grosor, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+    val palma = kotlin.math.hypot(m[18] - m[0], m[19] - m[1])
+    for ((punta, nudillo) in listOf(4 to 2, 8 to 5, 12 to 9, 16 to 13, 20 to 17)) {
+        if (kotlin.math.hypot(m[2 * punta] - m[2 * nudillo], m[2 * punta + 1] - m[2 * nudillo + 1]) > 0.55f * palma) {
+            drawCircle(Color(0xFFF3D9C6), dedo * 0.28f, q(punta))
+        }
+    }
+}
+

@@ -9,6 +9,7 @@ import co.edu.utb.silva.nucleo.Bosque
 import co.edu.utb.silva.nucleo.ClasificadorLetras
 import co.edu.utb.silva.nucleo.ClasificadorMovimiento
 import co.edu.utb.silva.nucleo.ClasificadorPalabras
+import co.edu.utb.silva.nucleo.GuiasLetras
 import co.edu.utb.silva.nucleo.Sugerencias
 import org.json.JSONArray
 import org.json.JSONObject
@@ -24,6 +25,7 @@ class Modelos(
     val palabras: ClasificadorPalabras,
     val animaciones: Animaciones,
     val sugerencias: Sugerencias,
+    val guias: GuiasLetras?,  // cómo se hace cada letra (Deletreo)
     val origen: String?,  // null = el modelo original; si no, de dónde salió el modelo propio importado
 ) {
     companion object {
@@ -61,6 +63,11 @@ class Modelos(
                     n.keys().asSequence().associateWith { n.getString(it) }, p.getDouble("umbral"), p.getDouble("umbral_sugerencia")),
                 Animaciones(leer("animaciones.bin"), original.getJSONArray("animaciones").textos()),
                 Sugerencias(String(leer("palabras_es.txt"), Charsets.UTF_8).lines()),
+                original.optJSONObject("guias_letras")?.let { g ->
+                    val trazo = g.getJSONArray("trazo")
+                    GuiasLetras(leer("animaciones_letras.bin"), g.getJSONArray("letras").textos(),
+                        List(trazo.length()) { trazo.getBoolean(it) })
+                },
                 if (propio("modelos.json") == null) null else indice.optString("origen", "modelo propio"),
             )
         }

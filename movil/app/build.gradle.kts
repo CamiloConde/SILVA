@@ -15,8 +15,8 @@ android {
         applicationId = "co.edu.utb.silva"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.4.0"
+        versionCode = 3
+        versionName = "1.4.1"
         // Teléfonos actuales (64 bits), los de 32 bits y el emulador
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
