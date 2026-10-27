@@ -21,6 +21,9 @@ MODOS
 - Responder (Ctrl+R): la persona oyente escribe su respuesta y se muestra en grande, con la seña
   animada de las palabras del vocabulario.
 - Leer en voz alta y Copiar: leen o copian el texto traducido.
+- Entrenar: grabar sus propias señas (solo puntos, nunca la imagen) y reentrenar los modelos con ellas, para
+  que reconozca mejor a quienes van a usar SILVA. Las muestras y los modelos entrenados quedan en
+  %LOCALAPPDATA%\SILVA; «Volver a los modelos originales» lo deshace.
 - Ajustes: elegir la cámara (por ejemplo el celular como cámara web con DroidCam o Iriun) y el
   tamaño del texto.
 

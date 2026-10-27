@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "silva"
-version = "1.3.0"
+version = "1.4.0"
 description = "SILVA: traducción en tiempo real de señas de la Lengua de Señas Colombiana (letras estáticas y 33 expresiones) a texto"
 requires-python = ">=3.10,<3.13"
 dependencies = [

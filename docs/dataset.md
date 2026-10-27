@@ -212,3 +212,22 @@ El teléfono usa los mismos clasificadores. `scripts/exportar_movil.py` los conv
 | Deletreo, 42 letras (umbral 0,80 → 0,60) | De 24 a 31 escritas, con 1 error |
 
 En vertical la persona se ve más pequeña. En una prueba en Python con videos de LSC-54, la app escribió el 80 % de las señas con la imagen completa, el 68 % con el recorte vertical y el 77 % con el recorte vertical y la persona más lejos. Por eso se recomienda apoyar el teléfono a 1,5–2 m.
+
+## El segmentador de Palabras mide en segundos
+
+El segmentador decidía cuándo empieza y termina una seña contando cuadros, con valores calibrados en el video a 30 cuadros/s de LSC-54. En el teléfono la app procesa 10-20 cuadros/s, así que una seña tenía que durar el doble para contar y la pausa final también se alargaba al doble. Ahora mide en segundos: a 30 cuadros/s corta igual que antes (13 de 2 880 videos se corren un cuadro) y a menos cuadros/s ya no pierde señas.
+
+`scripts/evaluar_fps.py` simula la cámara en vivo con los videos de 18 personas de LSC-54 que el modelo no vio (3 pliegues; cada modelo se entrena sin 6 personas, por eso las cifras absolutas son menores que en `metricas_palabras.md`):
+
+| Cuadros/s | Segmentador | Escrita bien | Escrita mal | «¿Quisiste decir?» | No detectada | Palabras falsas (señas ajenas) |
+|---|---|---|---|---|---|---|
+| 30 | por cuadros (1.3.0) | 43,6 % | 1,3 % | 18,2 % | 36,9 % | 0,1 % |
+| 30 | por segundos | 43,6 % | 1,3 % | 18,2 % | 36,9 % | 0,1 % |
+| 15 | por cuadros (1.3.0) | 36,6 % | 0,6 % | 20,1 % | 42,7 % | 0,0 % |
+| 15 | por segundos | **43,8 %** | 1,3 % | 18,8 % | 36,1 % | 0,3 % |
+| 10 | por cuadros (1.3.0) | 28,6 % | 0,7 % | 16,9 % | 53,8 % | 0,0 % |
+| 10 | por segundos | **40,7 %** | 1,8 % | 18,7 % | 38,7 % | 0,1 % |
+| 7,5 | por cuadros (1.3.0) | 17,5 % | 0,3 % | 12,4 % | 69,7 % | 0,0 % |
+| 7,5 | por segundos | **37,8 %** | 1,4 % | 19,6 % | 41,2 % | 0,3 % |
+
+1 198 videos del vocabulario y 792 de señas ajenas (colores y números). A 15 cuadros/s, la velocidad de un teléfono como el Galaxy A35, la app ahora escribe tantas señas como a 30.

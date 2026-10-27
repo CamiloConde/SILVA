@@ -2,7 +2,7 @@
 
 ## Pruebas automáticas
 
-Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **81 de 81 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
+Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **88 de 88 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
 
 Las tablas registran cada prueba en la versión en que se agregó. En la versión 1.3 el umbral de letras bajó de 0,80 a 0,60 (PR-02 ahora usa 0,59) y el modelo de letras quietas pasó de 17 a 20 letras (PR-08).
 
@@ -152,3 +152,18 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-70 | No funcional (RNF-01) | Permisos del APK | Sin permiso de internet | Solo cámara y micrófono (este último solo para «Hablar») | Aprobada |
 | PR-71 | Funcional (teléfono real) | Señas a texto en Palabras y Deletreo con buena luz, teléfono apoyado a 1,5–2 m | Reconoce como en el emulador; registrar los FPS | | Pendiente |
 | PR-72 | Funcional (teléfono real) | «Hablar», «Escuchar» y «Leer en voz alta» con audio real | Funcionan sin internet | | Pendiente |
+| PR-73 | Rendimiento (Galaxy A35, Android 16) | Modo Palabras con la cámara frontal: MediaPipe en CPU, en GPU, y manos en GPU con pose en CPU | Más cuadros/s sin perder precisión | CPU 7-10 · GPU 13 · manos en GPU y pose en CPU 15-17 cuadros/s (Deletreo: 15 → 19). Con los 24 videos de prueba: 16 palabras bien (CPU 17), ninguna mal | Aprobada |
+| PR-74 | Precisión en vivo (`scripts/evaluar_fps.py`) | Segmentador por cuadros contra por segundos a 30, 15, 10 y 7,5 cuadros/s, personas no vistas | Igual a 30; mejor a menos cuadros/s | A 30 idéntico; a 15, escrita bien 36,6 % → 43,8 %; a 10, 28,6 % → 40,7 % | Aprobada |
+| PR-75 | Unitaria (`test_palabras.py`) | La misma seña de 0,4 s a 30 y a 15 cuadros/s | Se detecta en ambos casos | Correcto (antes se descartaba a 15 cuadros/s) | Aprobada |
+
+## Versión 1.4.0: entrenar con muestras propias (27/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-76 | Unitaria (`test_muestras_propias.py`) | Archivo de muestras del teléfono y del PC: palabras, letras quietas y trazos; el mismo archivo dos veces; un archivo que no es de SILVA | Se separan por modelo, sin duplicados; se rechaza el ajeno | Correcto (4 pruebas) | Aprobada |
+| PR-77 | Integración (`test_palabras.py`, `test_interfaz.py`) | Ventana Entrenar: grabar una letra quieta; controlador entrenando en Palabras | Guarda la muestra, no escribe en el texto ni guarda una sesión | Correcto | Aprobada |
+| PR-78 | Funcional (app de PC, cámara real) | Grabar «Muy bien» y «Sí» sentado frente al PC | Muestras utilizables | 34 muestras; 12 llegaron al límite de 4 s porque el reposo sentado (manos a 0,3-0,7 anchos de hombro bajo los hombros) no se reconoce como reposo. Ahora se descartan y la app avisa | Parcial |
+| PR-79 | Despliegue (`SILVA.exe --entrenar`, carpeta de usuario temporal) | Reentrenar dentro del ejecutable con esas muestras | Modelo nuevo y paquete para el teléfono | 1 min 14 s; palabras escritas bien con sus tomas no vistas: antes 0 %, después 36 %; el ejecutable abre con el modelo nuevo. La prueba encontró una carpeta que no se creaba (corregido) | Aprobada |
+| PR-80 | Despliegue | `SILVA.exe --verificar` de la v1.4.0 | Modelos y datos para entrenar | Todo correcto, con los 5 datasets | Aprobada |
+| PR-81 | Funcional (teléfono) | Sección Entrenar en el Galaxy A35 | Se ve completa | Correcto; grabar y exportar desde el teléfono queda por probar con personas | Parcial |
+

@@ -1,6 +1,6 @@
 # SILVA
 
-**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.3.0
+**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.4.0
 
 SILVA traduce a texto, en tiempo real, señas de la Lengua de Señas Colombiana (LSC) captadas con una cámara, y permite que la persona oyente responda por escrito o por voz, con las señas animadas. Funciona en Windows y en teléfonos Android. Todo se procesa en el equipo: no necesita internet ni envía video a ningún servidor.
 
@@ -12,14 +12,14 @@ Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bol�
 
 En [Releases](https://github.com/CamiloConde/SILVA/releases) están los dos archivos de la última versión.
 
-**Windows** · `SILVA-v1.3.0-windows.zip` (unos 315 MB)
+**Windows** · `SILVA-v1.4.0-windows.zip` (unos 372 MB)
 1. Descomprímalo completo y abra `SILVA\SILVA.exe`.
    - Si Windows muestra «Windows protegió su PC», elija *Más información → Ejecutar de todas formas*. Aparece porque el ejecutable no está firmado digitalmente.
 2. Presione **Iniciar** (o Enter).
 
 Requisitos: Windows 10/11 de 64 bits, cámara web, 8 GB de RAM recomendados. El historial se guarda en `%LOCALAPPDATA%\SILVA\historial.db`. Para comprobar una instalación: `SILVA.exe --verificar --camara` crea un informe en `%LOCALAPPDATA%\SILVA\verificacion.txt`.
 
-**Android** · `SILVA-v1.3.0-android.apk` (unos 87 MB)
+**Android** · `SILVA-v1.4.0-android.apk` (unos 88 MB)
 1. Copie el `.apk` al teléfono (por cable a la carpeta *Download*, o por Google Drive) y ábralo desde *Archivos*.
 2. Si Android lo pide, permita instalar apps de esa fuente. Si Play Protect avisa que la app no es conocida, toque *Más detalles → Instalar de todas formas*. El aviso sale porque la app no viene de la Play Store.
 3. Abra SILVA y toque **Iniciar**. Pide la cámara; el micrófono solo si usa **Hablar**.
@@ -68,10 +68,28 @@ El detalle está en [docs/metricas_modelo.md](docs/metricas_modelo.md), [docs/me
 | **1 · 2 · 3** / **X** (Palabras) | Cambiar la palabra recién escrita por esa opción, o elegirla en «¿Quisiste decir?» / borrarla |
 | **Leer en voz alta** · **Copiar** | Lee el texto con la voz de Windows o lo copia |
 | **Responder** · Ctrl+R | Escribir una respuesta y mostrarla en grande con sus señas. Para cerrarla: clic sobre el video o Esc |
+| **Entrenar** | Grabar sus propias señas y reentrenar los modelos (ver abajo) |
 | **Historial** | Sesiones traducidas y respuestas guardadas |
 | **Ajustes** | Elegir la cámara (por ejemplo el celular como cámara web, con DroidCam o Iriun) y el tamaño del texto |
 
 Para escribir la misma letra dos veces seguidas (por ejemplo "LL"), retire la mano del cuadro entre una y otra.
+
+## Entrenar con sus propias señas
+
+Los modelos aprendieron con personas de pie frente a una cámara horizontal. Para que reconozcan mejor a quienes van a usar SILVA, en sus propias condiciones, se pueden grabar muestras y reentrenar. Solo se guardan los puntos del cuerpo y las manos, nunca la imagen.
+
+**En el PC** (el ejecutable o desde el código):
+1. **Entrenar** (arriba a la derecha) → escriba quién graba → elija una palabra o letra (según el modo de la ventana principal) → **Grabar**.
+   - Palabras: haga la seña y baje las manos del todo; repita unas 5 veces. Si la seña llega a 4 segundos sin que se vea el final, no se guarda.
+   - Letras con trazo (↝): trace la letra y quédese quieto al final. Letras quietas: sostenga la letra hasta que se llene la barra.
+2. **Entrenar los modelos ahora**: reentrena los tres modelos (alrededor de un minuto) y muestra si los reconoce mejor: el modelo actual contra uno entrenado con sus otras tomas, probando con tomas que no vio. No cierre SILVA mientras tanto.
+3. Cierre y vuelva a abrir SILVA para usar los modelos nuevos. En el ejecutable, **Volver a los modelos originales** lo deshace.
+
+En el ejecutable, las muestras y los modelos entrenados quedan en `%LOCALAPPDATA%\SILVA` (los que trae el programa no se tocan); desde el código, en `data/propias/` y `modelos/`. También crea `silva_modelo_<fecha>.zip` (en Descargas, o en `dist/` desde el código) para llevar el modelo al teléfono.
+
+**En el teléfono:** **Entrenar** graba igual; **Exportar** deja las muestras en *Descargas/SILVA* para pasarlas al PC (a `%LOCALAPPDATA%\SILVA\muestras` o `data/propias/`), y **Más… → Importar modelo** carga el `.zip` entrenado en el PC.
+
+Desde la terminal: `python scripts/entrenar_con_muestras.py [archivos del teléfono]` (con `--rapido`, como la app; sin él, también regenera los informes de `docs/`).
 
 ## App para Android
 
@@ -81,8 +99,11 @@ La app del teléfono reconoce lo mismo que la de escritorio: usa los mismos clas
 - **Texto a señas:** se escribe o se dicta una frase y aparece en grande con las señas animadas. «Vocabulario» muestra las 33 palabras.
 - **Conversar:** la conversación con lo señado, lo escrito y lo dicho, con «Texto grande» para leer de lejos y «Ver en señas» en cada mensaje.
 - **Historial.**
+- **Entrenar:** grabar muestras propias, exportarlas e importar el modelo reentrenado en el PC (ver «Entrenar con sus propias señas»).
 
 Para que reconozca mejor: en Palabras, apoye el teléfono a 1,5–2 m para que se vean los hombros y las dos manos; con buena luz de frente. Si se seña a sí mismo, use la cámara frontal.
+
+Rendimiento: MediaPipe corre con las manos en la GPU del teléfono y la pose en la CPU, al mismo tiempo (en un Galaxy A35, el modo Palabras pasó de 7-10 a 15-17 cuadros/s); si la GPU no está disponible, usa la CPU. El video se muestra a la velocidad de la cámara y el esqueleto se dibuja encima. Junto a «en vivo» se ven los cuadros/s y dónde corre MediaPipe («GPU+CPU» o «CPU»). Como el teléfono procesa menos cuadros que el PC, el comienzo y el final de cada seña se miden en segundos, no en cuadros.
 
 «Hablar» usa el reconocedor de voz del teléfono sin conexión cuando existe; si no, el de Android, que puede enviar el audio a Google. El video nunca sale del teléfono.
 
@@ -116,7 +137,7 @@ Los modelos ya vienen en `modelos/`, así que después de instalar la app funcio
 python -m pytest -v
 ```
 
-Son 81 pruebas automáticas:
+Son 88 pruebas automáticas:
 - Regla de confirmación de letras, letras con trazo y normalización de puntos.
 - Detectores reales de MediaPipe y los tres clasificadores.
 - Segmentación de señas, escritura inmediata, corrección y recuperación de la mano perdida.
@@ -124,6 +145,7 @@ Son 81 pruebas automáticas:
 - Historial y respuestas.
 - Controlador en ambos modos.
 - Interfaz: ciclos Iniciar/Detener con el hilo de video, modos, edición, Responder e historial.
+- Entrenar: grabación de muestras (PC y formato del teléfono), lectura y descarte de muestras sin final claro.
 - Ejecución sin red y tiempo por cuadro.
 
 La app de Android tiene 12 pruebas más (`movil\gradlew.bat -p movil testDebugUnitTest`). Comparan sus características, probabilidades, constantes y búsqueda de señas con casos generados por Python, para asegurar que el teléfono calcula lo mismo que el PC.
@@ -141,8 +163,8 @@ python scripts/construir_ejecutable.py
 
 El script hace tres cosas:
 1. Empaqueta con PyInstaller ([empaquetado/silva.spec](empaquetado/silva.spec)).
-2. Verifica que el ejecutable cargue todos los modelos por sí solo.
-3. Genera `dist/SILVA-v1.3.0-windows.zip`, que es el archivo que se sube a *Releases*.
+2. Verifica que el ejecutable cargue todos los modelos y traiga los datos para entrenar.
+3. Genera `dist/SILVA-v1.4.0-windows.zip`, que es el archivo que se sube a *Releases*.
 
 **Android** (requiere el SDK de Android y un JDK 17 o más reciente, por ejemplo el de Android Studio):
 
@@ -154,11 +176,11 @@ python scripts/exportar_movil.py
 movil\gradlew.bat -p movil assembleRelease
 ```
 
-`exportar_movil.py` copia los modelos, los casos de prueba y la lista de palabras a `movil/app/src/main/assets`. El APK queda en `movil/app/build/outputs/apk/release/app-release.apk`; se renombra como `SILVA-v1.3.0-android.apk`. Está firmado con la clave de desarrollo: se instala sin problema, pero para la Play Store habría que firmarlo con una clave propia.
+`exportar_movil.py` copia los modelos, los casos de prueba y la lista de palabras a `movil/app/src/main/assets`. El APK queda en `movil/app/build/outputs/apk/release/app-release.apk`; se renombra como `SILVA-v1.4.0-android.apk`. Está firmado con la clave de desarrollo: se instala sin problema, pero para la Play Store habría que firmarlo con una clave propia.
 
 Pasos para publicar:
 1. En GitHub, entre a **Releases** y luego a **Draft a new release**.
-2. Cree la etiqueta `v1.3.0`.
+2. Cree la etiqueta `v1.4.0`.
 3. Adjunte el `.zip` y el `.apk`.
 4. Publique con **Publish release**.
 
@@ -230,7 +252,7 @@ SILVA/
 │   └── modelo.py               Landmark, Mano, Prediccion
 ├── movil/                  # App de Android (Kotlin)
 ├── scripts/                # Preparar datos, entrenar, exportar al teléfono, construir el ejecutable
-├── tests/                  # 81 pruebas con pytest
+├── tests/                  # 88 pruebas con pytest
 ├── data/landmarks/         # Puntos extraídos de los datasets (.npz)
 ├── modelos/                # MediaPipe (manos, pose), clasificadores y animaciones
 ├── empaquetado/            # PyInstaller: especificación, lanzador y LEEME del ejecutable
