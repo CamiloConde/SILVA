@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="31 39 233 275">
+  <!-- SILVA, identidad v2: la S es el trazo de la seña; la barra azul, el cursor de texto -->
+  <path d="M 222 71 H 117 A 50 50 0 0 0 117 171 H 164 A 54 54 0 0 1 164 279 H 41"
+        fill="none" stroke="#16181D" stroke-width="44" stroke-linecap="butt"/>
+  <rect x="229" y="201" width="25" height="103" fill="#1F4FD8"/>
+</svg>

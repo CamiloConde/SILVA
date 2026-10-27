@@ -56,7 +56,7 @@ def test_iniciar_detener_varias_veces(app):
     ventana, ctrl, errores = crear(app)
     for ronda in range(3):
         ventana.btn_principal.click()
-        assert esperar(app, lambda: ctrl.activo and ventana.lbl_fps.text() != ""), f"no inició (ronda {ronda})"
+        assert esperar(app, lambda: ctrl.activo and "fps" in ventana.lbl_fps.text()), f"no inició (ronda {ronda})"
         assert "Detener" in ventana.btn_principal.text()
         ventana.btn_principal.click()
         assert not ctrl.activo and not ventana.activo
@@ -70,7 +70,7 @@ def test_letra_confirmada_aparece_en_el_texto(app):
     ventana, ctrl, _ = crear(app)
     ventana.iniciar()
     assert esperar(app, lambda: "A" in ventana.lbl_texto.text())
-    assert "Última confirmada: A" in ventana.lbl_ultima.text()
+    assert "A confirmada" in ventana.lbl_ultima.text()
     assert ventana.btn_borrar.isEnabled()
     ventana.detener()
     ventana.close()
@@ -113,7 +113,7 @@ def test_cambio_de_modo(app):
     ventana = VentanaPrincipal(ctrl)
     ventana.btn_modo[MODO_PALABRAS].click()
     assert ctrl.modo == MODO_PALABRAS
-    assert ventana.lbl_titulo_det.text() == "PALABRA DETECTADA"
+    assert ventana.lbl_titulo_det.text() == "Palabra detectada"
     assert ventana.pila.currentIndex() == 1 and not ventana.btn_espacio.isVisibleTo(ventana)
     ventana.btn_modo[MODO_LETRAS].click()
     assert ctrl.modo == MODO_LETRAS and ventana.pila.currentIndex() == 0
@@ -180,15 +180,16 @@ def _pendiente(automatica):
                             automatica, 0.0, 2.5)
 
 
-def test_palabra_provisional_se_puede_corregir(app):
-    """RF-13: la palabra reconocida se muestra con opciones y se puede cambiar antes de escribirse."""
+def test_palabra_escrita_se_puede_corregir(app):
+    """RF-13: la palabra reconocida se escribe y se muestra con opciones para cambiarla."""
     ventana, ctrl = _ventana_palabras(app)
+    ctrl.buffer.agregar_palabra("Hola")
     ctrl.pendiente = _pendiente(True)
     ventana._mostrar_pendiente(ctrl.pendiente, 1.0)
     assert ventana.panel_pendiente.isVisibleTo(ventana)
-    assert "Chao" in ventana.btn_opciones[1].text()
+    assert ventana.btn_opciones[1].text() == "CHAO"
     ventana.btn_opciones[1].click()  # la persona corrige: era «Chao»
-    assert ctrl.buffer.texto == "Chao"
+    assert ctrl.buffer.texto.strip() == "Chao"
     assert not ventana.panel_pendiente.isVisibleTo(ventana)
     ventana.close()
 
@@ -200,9 +201,10 @@ def test_sugerencia_se_descarta_y_espacio_confirma(app):
     assert not ventana.btn_confirmar.isVisibleTo(ventana)  # una sugerencia no tiene «Confirmar»: se elige
     ventana.descartar()
     assert ctrl.pendiente is None and ctrl.buffer.texto == ""
+    ctrl.buffer.agregar_palabra("Hola")
     ctrl.pendiente = _pendiente(True)
-    ventana.espacio()  # en modo Palabras, Espacio confirma la provisional
-    assert ctrl.buffer.texto == "Hola"
+    ventana.espacio()  # en modo Palabras, Espacio da por buena la palabra escrita
+    assert ctrl.buffer.texto == "Hola" and ctrl.pendiente is None
     ventana.close()
 
 
@@ -216,7 +218,7 @@ def test_selector_de_camara(app):
 def test_aviso_de_poca_luz(app):
     """Con imagen oscura la ventana dice la causa probable de que se pierda la mano."""
     from silva.controlador import ResultadoCuadro
-    from silva.interfaz import AVISO_POCA_LUZ
+    from silva.interfaz import AVISO_POCA_LUZ, AVISO_SIN_MANO
     import numpy as np
     ventana, ctrl, _ = crear(app)
     r = ResultadoCuadro(np.zeros((480, 640, 3), np.uint8), None, None, None, "", 0, 30, brillo=10)
@@ -224,5 +226,39 @@ def test_aviso_de_poca_luz(app):
     assert ventana.video._banda == AVISO_POCA_LUZ
     r.brillo = 120
     ventana._pintar_letras(r)
-    assert ventana.video._banda == "✋  No se detecta la mano"
+    assert ventana.video._banda == AVISO_SIN_MANO
+    ventana.close()
+
+
+def test_respuesta_muestra_las_senas_conocidas(app):
+    if not config.RUTA_ANIMACIONES.exists():
+        pytest.skip("Falta modelos/animaciones_senas.npz")
+    ventana, ctrl, _ = crear(app)
+    ventana.mostrar_respuesta("Hola, muchas gracias por esperar")
+    assert ventana.video.animacion.isVisibleTo(ventana)
+    assert ventana.video.animacion.senas == ["Hola", "Muchas gracias", "Esperar"]
+    ventana.video.poner_respuesta(None)
+    assert not ventana.video.animacion.isVisibleTo(ventana)
+    ventana.close()
+
+
+def test_quisiste_decir_completa_la_palabra_deletreada(app):
+    """Deletreo: con las primeras letras se ofrecen palabras frecuentes que empiezan así."""
+    if not config.RUTA_PALABRAS_ES.exists():
+        pytest.skip("Falta recursos/palabras_es.txt")
+    ventana, ctrl, _ = crear(app)
+    ventana.cambiar_modo(MODO_LETRAS)
+    for letra in "HOLA":
+        ctrl.buffer.agregar_letra(letra)
+    ctrl.buffer.agregar_espacio()
+    for letra in "MUN":
+        ctrl.buffer.agregar_letra(letra)
+    ventana._actualizar_texto()
+    assert ventana.fila_sugerencias.isVisibleTo(ventana)
+    assert ventana.btn_sugerencias[0].text() == "MUNDO"
+    ventana.btn_sugerencias[0].click()
+    assert ctrl.buffer.texto == "HOLA MUNDO "
+    ventana.borrar()  # se borra letra por letra
+    ventana.borrar()
+    assert ctrl.buffer.texto == "HOLA MUND"
     ventana.close()

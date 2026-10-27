@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Ícono de SILVA (identidad v2): S blanca y cursor azul sobre tinta -->
+  <rect width="512" height="512" rx="112" fill="#16181D"/>
+  <g transform="translate(71.6 35.4) scale(1.25)">
+    <path d="M 222 71 H 117 A 50 50 0 0 0 117 171 H 164 A 54 54 0 0 1 164 279 H 41"
+          fill="none" stroke="#FFFFFF" stroke-width="44" stroke-linecap="butt"/>
+    <rect x="229" y="201" width="25" height="103" fill="#1F4FD8"/>
+  </g>
+</svg>

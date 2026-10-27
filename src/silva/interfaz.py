@@ -1,134 +1,164 @@
-"""VentanaPrincipal: interfaz de escritorio en PySide6 (Qt).
+"""VentanaPrincipal: interfaz de escritorio en PySide6 (Qt), con la identidad v2 de SILVA.
 
 La cámara y MediaPipe corren en un hilo aparte (TrabajadorVideo): la ventana
 solo recibe cada cuadro ya procesado y nunca se congela mientras se detecta.
 Es el paralelismo del diagrama de actividades (Figura 6): una rama muestra el
 video y la otra detecta la mano.
+
+Diseño (docs: «SILVA - Propuesta de diseño 2»): papel de fondo, cámara en tinta,
+azul para la acción y lo confirmado, ocre para «leyendo seña»; IBM Plex Sans.
 """
 
 from __future__ import annotations
 
+import math
+import subprocess
+import sys
 import threading
 import time
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve, QPoint, QPropertyAnimation, QRect, QRectF, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal,
+)
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QShortcut,
+    QColor, QFont, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QImage, QKeySequence, QPainter,
+    QPainterPath, QPen, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
-    QComboBox, QHeaderView, QLabel, QLayout, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QTabWidget,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
+    QHeaderView, QLabel, QLayout, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
+    QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from silva import __version__, config
-
-AVISO_POCA_LUZ = "💡  Poca luz: los movimientos salen borrosos y se pierde la mano. Encienda una luz de frente"
+from silva.animacion import AnimacionesSenas, AnimacionSena
 from silva.captura_video import CamaraNoDisponibleError
 from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, PalabraPendiente, ResultadoCuadro
-from silva.cuerpo import dibujar_cuerpo
+from silva.cuerpo import dibujar_cuerpo, evaluar_encuadre
 from silva.detector_manos import dibujar_mano
+from silva.sugerencias import Sugerencias
 
-# Paleta (tema oscuro)
-FONDO = "#0b1120"
-TARJETA = "#151e32"
-TARJETA_2 = "#1e293b"
-BORDE = "#26334a"
-TEXTO = "#f1f5f9"
-SUAVE = "#94a3b8"
-TENUE = "#64748b"
-ACENTO = "#3b82f6"
-OK = "#22c55e"
-ALERTA = "#f59e0b"
-PELIGRO = "#ef4444"
-VIDEO_FONDO = "#020617"
+# Identidad v2
+TINTA = "#16181D"  # texto, cámara
+GRAFITO = "#5B616B"  # texto secundario
+LINEA = "#E3E1DA"  # bordes, divisiones
+PAPEL = "#F7F6F2"  # fondo
+AZUL = "#1F4FD8"  # acción, confirmado
+OCRE = "#E8A317"  # leyendo seña
+BLANCO = "#FFFFFF"
+APAGADO = "#A9ADB4"  # letras que aún no se reconocen, controles inactivos
+BORDE_BOTON = "#CFCCC3"
+SANS = "IBM Plex Sans"
+MONO = "IBM Plex Mono"
+
+AVISO_POCA_LUZ = "Poca luz: los movimientos salen borrosos y se pierde la mano. Enciende una luz de frente."
+AVISO_SIN_MANO = "Mantén la mano dentro del recuadro."
+AVISO_SIN_PERSONA = "Colócate frente a la cámara: deben verse los hombros y las manos."
+AVISO_BORDE = "Aléjate un poco: una mano se sale del cuadro."
 
 HOJA_ESTILO = f"""
-QWidget {{ background: transparent; color: {TEXTO}; font-family: "Segoe UI"; font-size: 10pt; }}
-#raiz {{ background: {FONDO}; }}
-#tarjeta {{ background: {TARJETA}; border: 1px solid {BORDE}; border-radius: 14px; }}
-#titulo {{ font-size: 20pt; font-weight: 700; letter-spacing: 1px; }}
-#subtitulo {{ color: {SUAVE}; font-size: 11pt; }}
-#seccion {{ color: {TENUE}; font-size: 8pt; font-weight: 700; letter-spacing: 1px; }}
-#suave {{ color: {SUAVE}; }}
-#tenue {{ color: {TENUE}; font-size: 9pt; }}
+QWidget {{ background: transparent; color: {TINTA}; font-family: "{SANS}"; font-size: 10pt; }}
+#raiz, QDialog {{ background: {PAPEL}; }}
+#cabecera {{ background: {BLANCO}; border-bottom: 1px solid {LINEA}; }}
+#marca_texto {{ font-size: 15pt; font-weight: 700; letter-spacing: 2px; }}
+QPushButton#pestana {{ background: transparent; border: none; border-bottom: 3px solid transparent; border-radius: 0;
+                       color: {GRAFITO}; padding: 19px 20px 16px 20px; font-size: 11pt; }}
+QPushButton#pestana:hover {{ color: {TINTA}; }}
+QPushButton#pestana:checked {{ color: {TINTA}; font-weight: 600; border-bottom: 3px solid {AZUL}; }}
+QPushButton#pestana:disabled {{ color: {APAGADO}; }}
+QPushButton#cabecera_enlace {{ background: transparent; border: none; color: {TINTA}; font-size: 11pt; padding: 8px 14px; }}
+QPushButton#cabecera_enlace:hover {{ color: {AZUL}; }}
 
-#selector {{ background: {TARJETA}; border: 1px solid {BORDE}; border-radius: 10px; }}
-QPushButton#modo {{ background: transparent; color: {SUAVE}; border: none; border-radius: 7px;
-                    padding: 6px 18px; font-weight: 600; }}
-QPushButton#modo:hover {{ color: {TEXTO}; }}
-QPushButton#modo:checked {{ background: {ACENTO}; color: white; }}
-QPushButton#modo:disabled {{ color: {TENUE}; }}
+#panel {{ background: {BLANCO}; border-left: 1px solid {LINEA}; }}
+#separador {{ background: {LINEA}; max-height: 1px; min-height: 1px; }}
+#seccion {{ color: {GRAFITO}; font-size: 10.5pt; font-weight: 600; }}
+#tenue {{ color: {GRAFITO}; font-size: 9.5pt; }}
+#estado {{ color: {GRAFITO}; font-size: 10pt; }}
+#info_camara {{ color: {GRAFITO}; font-size: 10pt; }}
+#letra {{ font-size: 66pt; font-weight: 700; color: {TINTA}; }}
+#letra[tam="palabra"] {{ font-size: 28pt; }}
+#letra[dudosa="true"] {{ color: {APAGADO}; }}
+#porcentaje {{ font-size: 20pt; font-weight: 500; }}
+#letra_abc {{ font-size: 11pt; font-weight: 500; color: {TINTA}; padding: 2px; }}
+#letra_abc[apagada="true"] {{ color: {APAGADO}; }}
+#letra_abc[activo="true"] {{ color: {AZUL}; text-decoration: underline; }}
+#palabra_voc {{ font-size: 10pt; color: {TINTA}; padding: 2px 4px; }}
+#palabra_voc[activo="true"] {{ color: {AZUL}; text-decoration: underline; }}
 
-#pastilla {{ border-radius: 12px; padding: 4px 14px; font-weight: 600; background: {TARJETA_2}; }}
-#pastilla[estado="apagada"] {{ color: {TENUE}; }}
-#pastilla[estado="conectando"] {{ color: {ALERTA}; }}
-#pastilla[estado="vivo"] {{ color: {OK}; background: rgba(34, 197, 94, 0.12); }}
+#texto_zona {{ background: {BLANCO}; border-top: 1px solid {LINEA}; }}
+#texto {{ font-size: 28pt; font-weight: 500; }}
+#texto[grande="true"] {{ font-size: 40pt; }}
+#texto[vacio="true"] {{ font-size: 12pt; font-weight: 400; color: {GRAFITO}; }}
+QPushButton#enlace {{ background: transparent; border: none; color: {AZUL}; text-decoration: underline; padding: 2px 6px;
+                      font-size: 11pt; border-radius: 0; }}
+QPushButton#enlace:hover {{ color: {TINTA}; }}
+QPushButton#enlace_gris {{ background: transparent; border: none; color: {GRAFITO}; padding: 2px 6px; font-size: 10.5pt;
+                           border-radius: 0; }}
+QPushButton#enlace_gris:hover {{ color: {TINTA}; }}
+QPushButton#accion {{ background: transparent; border: none; color: {AZUL}; padding: 2px 8px; font-size: 10.5pt;
+                      font-weight: 500; }}
+QPushButton#accion:disabled {{ color: {APAGADO}; }}
 
-#detectada {{ background: {TARJETA_2}; border-radius: 12px; border: 2px solid transparent; }}
-#detectada[confirmada="true"] {{ border: 2px solid {OK}; }}
-#letra {{ font-weight: 700; color: {TEXTO}; font-size: 64pt; }}
-#letra[tam="palabra"] {{ font-size: 24pt; }}
-#letra[dudosa="true"] {{ color: {TENUE}; }}
+#barra {{ background: {PAPEL}; border-top: 1px solid {LINEA}; }}
+QPushButton {{ font-size: 11pt; border-radius: 4px; padding: 9px 22px; }}
+QPushButton#primario {{ background: {TINTA}; color: {BLANCO}; font-weight: 600; border: 1px solid {TINTA}; }}
+QPushButton#primario:hover {{ background: #2A2D35; }}
+QPushButton#primario:disabled {{ background: {APAGADO}; border-color: {APAGADO}; }}
+QPushButton#secundario {{ background: {BLANCO}; color: {TINTA}; border: 1px solid {BORDE_BOTON}; }}
+QPushButton#secundario:hover {{ border-color: {TINTA}; }}
+QPushButton#secundario:disabled {{ color: {APAGADO}; border-color: {LINEA}; }}
+QPushButton#plano {{ background: transparent; border: none; color: {GRAFITO}; padding: 9px 12px; }}
+QPushButton#plano:hover {{ color: {TINTA}; }}
+QPushButton#plano:disabled {{ color: {APAGADO}; }}
+QPushButton#azul {{ background: {AZUL}; border: 1px solid {AZUL}; padding: 9px 18px; }}
+QPushButton#azul:hover {{ background: #1A43B8; }}
+#azul_texto {{ color: {BLANCO}; font-weight: 600; font-size: 11pt; }}
+#azul_atajo {{ color: #C9D5F7; font-family: "{MONO}"; font-size: 9.5pt; }}
+#atajos {{ font-family: "{MONO}"; color: {GRAFITO}; font-size: 9.5pt; }}
 
-QProgressBar {{ background: {TARJETA_2}; border: none; border-radius: 4px; max-height: 8px; min-height: 8px; }}
-QProgressBar::chunk {{ border-radius: 4px; background: {ACENTO}; }}
-QProgressBar#conf::chunk {{ background: {OK}; }}
-QProgressBar#conf[baja="true"]::chunk {{ background: {ALERTA}; }}
-#valorconf {{ font-weight: 700; }}
-#valorconf[baja="true"] {{ color: {ALERTA}; }}
-#valorconf[alta="true"] {{ color: {OK}; }}
-#ultima {{ color: {OK}; }}
-
-#chip {{ background: {TARJETA_2}; color: {SUAVE}; border-radius: 7px; padding: 3px 8px; font-weight: 600;
-         font-size: 9pt; }}
+#titulo {{ font-size: 16pt; font-weight: 600; }}
+QTableWidget {{ background: {BLANCO}; border: 1px solid {LINEA}; gridline-color: {LINEA};
+               selection-background-color: {AZUL}; selection-color: {BLANCO}; }}
+QHeaderView::section {{ background: {PAPEL}; color: {GRAFITO}; border: none; border-bottom: 1px solid {LINEA};
+                        padding: 6px; font-weight: 600; }}
+QPlainTextEdit {{ background: {BLANCO}; border: 1px solid {LINEA}; border-radius: 4px; padding: 8px; font-size: 18pt;
+                  selection-background-color: {AZUL}; }}
+QPlainTextEdit:focus {{ border: 1px solid {AZUL}; }}
+QTabWidget::pane {{ border: none; }}
+QTabBar::tab {{ background: transparent; color: {GRAFITO}; padding: 8px 16px; border-bottom: 3px solid transparent;
+               font-size: 10.5pt; }}
+QTabBar::tab:selected {{ color: {TINTA}; font-weight: 600; border-bottom: 3px solid {AZUL}; }}
+QComboBox {{ background: {BLANCO}; border: 1px solid {BORDE_BOTON}; border-radius: 4px; padding: 6px 10px; min-width: 220px; }}
+QComboBox QAbstractItemView {{ background: {BLANCO}; color: {TINTA}; selection-background-color: {AZUL};
+                              selection-color: {BLANCO}; }}
 QScrollArea {{ border: none; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: {BORDE}; border-radius: 4px; min-height: 24px; }}
+QScrollBar::handle:vertical {{ background: {LINEA}; border-radius: 4px; min-height: 24px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
-#chip[activo="true"] {{ background: {ACENTO}; color: white; }}
-
-#texto {{ font-family: "Cascadia Mono", "Consolas"; font-size: 22pt; font-weight: 700; }}
-#texto[vacio="true"] {{ font-family: "Segoe UI"; font-size: 12pt; font-weight: 400; color: {TENUE}; }}
-
-QPushButton {{ border: none; border-radius: 9px; padding: 9px 18px; font-weight: 600; }}
-QPushButton#primario {{ background: {ACENTO}; color: white; }}
-QPushButton#primario:hover {{ background: #2563eb; }}
-QPushButton#primario[peligro="true"] {{ background: {PELIGRO}; }}
-QPushButton#primario[peligro="true"]:hover {{ background: #dc2626; }}
-QPushButton#primario:disabled {{ background: {TARJETA_2}; color: {TENUE}; }}
-QPushButton#secundario {{ background: {TARJETA_2}; color: {TEXTO}; }}
-QPushButton#secundario:hover {{ background: {BORDE}; }}
-QPushButton#secundario:disabled {{ background: {TARJETA}; color: {TENUE}; }}
-
-QDialog {{ background: {FONDO}; }}
-QTableWidget {{ background: {TARJETA}; border: 1px solid {BORDE}; border-radius: 10px; gridline-color: {BORDE};
-               selection-background-color: {ACENTO}; }}
-QHeaderView::section {{ background: {TARJETA_2}; color: {SUAVE}; border: none; padding: 6px; font-weight: 600; }}
-QPlainTextEdit {{ background: {TARJETA}; border: 1px solid {BORDE}; border-radius: 10px; padding: 8px;
-                  font-size: 20pt; selection-background-color: {ACENTO}; }}
-QPlainTextEdit:focus {{ border: 1px solid {ACENTO}; }}
-QTabWidget::pane {{ border: none; }}
-QTabBar::tab {{ background: {TARJETA}; color: {SUAVE}; padding: 7px 16px; border-radius: 7px; margin-right: 4px;
-               font-weight: 600; }}
-QTabBar::tab:selected {{ background: {ACENTO}; color: white; }}
-#pendiente {{ background: {TARJETA_2}; border-radius: 10px; }}
-#pendiente[tipo="provisional"] {{ border: 1px solid {OK}; }}
-#pendiente[tipo="sugerencia"] {{ border: 1px solid {ALERTA}; }}
-QPushButton#opcion {{ background: {TARJETA}; color: {TEXTO}; border: 1px solid {BORDE}; border-radius: 8px;
-                      padding: 6px 8px; font-weight: 600; text-align: left; }}
-QPushButton#opcion:hover {{ border: 1px solid {ACENTO}; }}
-QPushButton#opcion[principal="true"] {{ border: 1px solid {OK}; }}
-QComboBox#camara {{ background: {TARJETA}; border: 1px solid {BORDE}; border-radius: 8px; padding: 5px 10px;
-                    color: {SUAVE}; font-weight: 600; min-width: 150px; }}
-QComboBox#camara:disabled {{ color: {TENUE}; }}
-QComboBox#camara QAbstractItemView {{ background: {TARJETA}; color: {TEXTO}; selection-background-color: {ACENTO}; }}
-QToolTip {{ background: {TARJETA_2}; color: {TEXTO}; border: 1px solid {BORDE}; }}
+QToolTip {{ background: {TINTA}; color: {BLANCO}; border: none; padding: 4px; }}
 """
+
+_fuentes_cargadas = False
+
+
+def cargar_fuentes() -> None:
+    """Registra IBM Plex Sans y Mono (recursos/fuentes): la app no depende de las fuentes del equipo."""
+    global _fuentes_cargadas
+    if _fuentes_cargadas:
+        return
+    for ruta in sorted(config.DIR_FUENTES.glob("*.ttf")):
+        QFontDatabase.addApplicationFont(str(ruta))
+    _fuentes_cargadas = True
+
+
+def fuente(tam: float, peso: QFont.Weight = QFont.Normal, familia: str = SANS) -> QFont:
+    f = QFont(familia)
+    f.setPointSizeF(tam)
+    f.setWeight(peso)
+    return f
 
 
 def _repulir(widget: QWidget, **propiedades) -> None:
@@ -155,10 +185,10 @@ def _boton(texto: str, nombre: str, accion) -> QPushButton:
     return boton
 
 
-def _tarjeta() -> QFrame:
-    marco = QFrame()
-    marco.setObjectName("tarjeta")
-    return marco
+def _separador() -> QFrame:
+    linea = QFrame()
+    linea.setObjectName("separador")
+    return linea
 
 
 def componer_imagen(r: ResultadoCuadro) -> QImage:
@@ -212,8 +242,37 @@ class TrabajadorVideo(QThread):
 
 
 # --------------------------------------------------------------------------------- widgets
+class BarraSegmentos(QWidget):
+    """Estado de la detección en 5 segmentos: gris sin mano, ocre leyendo (k de 5 cuadros), azul confirmada."""
+
+    def __init__(self, segmentos: int = 5) -> None:
+        super().__init__()
+        self.segmentos = segmentos
+        self._llenos = 0
+        self._color = OCRE
+        self.setFixedHeight(6)
+
+    def poner(self, llenos: int, color: str = OCRE) -> None:
+        llenos = max(0, min(llenos, self.segmentos))
+        if (llenos, color) != (self._llenos, self._color):
+            self._llenos, self._color = llenos, color
+            self.update()
+
+    def value(self) -> int:  # compatibilidad: avance en % (como la barra anterior)
+        return round(100 * self._llenos / self.segmentos)
+
+    def paintEvent(self, _evento) -> None:
+        p = QPainter(self)
+        espacio = 6
+        ancho = (self.width() - espacio * (self.segmentos - 1)) / self.segmentos
+        for i in range(self.segmentos):
+            p.fillRect(QRectF(i * (ancho + espacio), 0, ancho, self.height()),
+                       QColor(self._color if i < self._llenos else LINEA))
+        p.end()
+
+
 class VideoWidget(QWidget):
-    """Muestra el video con esquinas redondeadas y los avisos superpuestos."""
+    """Video sobre fondo tinta, con el recuadro o la silueta guía, el estado y los avisos superpuestos."""
 
     respuesta_cerrada = Signal()
 
@@ -221,15 +280,26 @@ class VideoWidget(QWidget):
         super().__init__()
         self._imagen: QImage | None = None
         self._respuesta: str | None = None
-        self._pendiente: tuple[list[str], bool, float] | None = None  # (opciones, provisional, progreso)
+        self._pendiente: tuple[list[str], bool, float] | None = None  # (opciones, escrita, progreso)
+        self._pendiente_desde = 0.0  # para la animación de entrada de la tarjeta
+        self._guia: str | None = None  # "ok" | "ajustar" | None: silueta de encuadre (modo Palabras)
+        self._recuadro = False  # modo Deletreo: recuadro donde va la mano
+        self.animacion: AnimacionSena | None = None  # palabras a señas, junto a la respuesta
+        self._alfa_respuesta = 1.0
+        self._anim_respuesta = QVariantAnimation(self)
+        self._anim_respuesta.setDuration(260)
+        self._anim_respuesta.setStartValue(0.0)
+        self._anim_respuesta.setEndValue(1.0)
+        self._anim_respuesta.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim_respuesta.valueChanged.connect(self._al_animar_respuesta)
         self._aviso = ""
         self._banda: str | None = None
         self._grabando = False
-        self.setMinimumSize(480, 360)
+        self.setMinimumSize(480, 300)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def sizeHint(self) -> QSize:
-        return QSize(720, 540)
+        return QSize(860, 480)
 
     def poner_imagen(self, imagen: QImage) -> None:
         self._imagen = imagen
@@ -239,6 +309,7 @@ class VideoWidget(QWidget):
         """Quita el video y muestra un mensaje centrado."""
         self._imagen, self._aviso, self._banda, self._grabando = None, texto, None, False
         self._pendiente = None
+        self._guia = None
         self.update()
 
     def poner_banda(self, texto: str | None) -> None:
@@ -246,18 +317,59 @@ class VideoWidget(QWidget):
             self._banda = texto
             self.update()
 
-    def poner_pendiente(self, opciones: list[str] | None, provisional: bool = True, progreso: float = 0.0) -> None:
-        """RF-13: palabra por confirmar (provisional) o «¿Quiso decir…?» (sugerencia), en grande sobre el video
+    def poner_recuadro(self, visible: bool) -> None:
+        if visible != self._recuadro:
+            self._recuadro = visible
+            self.update()
+
+    def poner_pendiente(self, opciones: list[str] | None, escrita: bool = True, progreso: float = 0.0) -> None:
+        """RF-13: palabra escrita (con sus alternativas) o «¿Quisiste decir?», en grande sobre el video
         para que la vea también quien signa, a distancia."""
-        nuevo = None if not opciones else (list(opciones), provisional, round(progreso, 2))
+        nuevo = None if not opciones else (list(opciones), escrita, round(progreso, 2))
         if nuevo != self._pendiente:
+            if self._pendiente is None or (nuevo is not None and nuevo[:2] != self._pendiente[:2]):
+                self._pendiente_desde = time.monotonic()  # tarjeta nueva: entra deslizándose
             self._pendiente = nuevo
             self.update()
 
-    def poner_respuesta(self, texto: str | None) -> None:
-        """RF-09: muestra en grande, sobre el video, la respuesta escrita por la persona oyente."""
+    def poner_guia(self, estado: str | None) -> None:
+        """Silueta de dónde ubicarse: azul ("ok") u ocre ("ajustar"); None la oculta."""
+        if estado != self._guia:
+            self._guia = estado
+            self.update()
+
+    def usar_animaciones(self, animaciones: AnimacionesSenas) -> None:
+        self.animacion = AnimacionSena(animaciones, self)
+        self.animacion.hide()
+
+    def resizeEvent(self, evento) -> None:
+        if self.animacion is not None:
+            ancho = int(self.width() * 0.36)
+            self.animacion.setGeometry(self.width() - ancho - 24, 24, ancho, self.height() - 48)
+        super().resizeEvent(evento)
+
+    def poner_respuesta(self, texto: str | None, senas: list[str] | None = None) -> None:
+        """RF-09: muestra en grande, sobre el video, la respuesta escrita por la persona oyente.
+
+        RF-15: si el texto contiene palabras con seña conocida, a la derecha se anima cómo se hacen.
+        """
+        if self.animacion is not None:
+            if texto is not None and senas:
+                self.animacion.mostrar(senas)
+                self.animacion.show()
+                self.animacion.raise_()
+            else:
+                self.animacion.detener()
+                self.animacion.hide()
+        aparece = texto is not None and self._respuesta is None
         self._respuesta = texto
         self.setCursor(Qt.PointingHandCursor if texto else Qt.ArrowCursor)
+        if aparece:
+            self._anim_respuesta.start()  # fundido de entrada
+        self.update()
+
+    def _al_animar_respuesta(self, valor) -> None:
+        self._alfa_respuesta = float(valor)
         self.update()
 
     @property
@@ -279,112 +391,152 @@ class VideoWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        marco = QRectF(self.rect())
         recorte = QPainterPath()
-        recorte.addRoundedRect(marco, 14, 14)
+        recorte.addRoundedRect(QRectF(self.rect()), 6, 6)
         p.setClipPath(recorte)
-        p.fillRect(self.rect(), QColor(VIDEO_FONDO))
-
-        if self._imagen is not None:
-            escalada = self._imagen.size().scaled(self.size(), Qt.KeepAspectRatio)
-            destino = QRect(QPoint(0, 0), escalada)
-            destino.moveCenter(self.rect().center())
-            p.drawImage(destino, self._imagen)
-        else:
-            centro = self.rect().center()
-            p.setPen(QColor(TENUE))
-            p.setFont(QFont("Segoe UI Emoji", 30))
-            p.drawText(QRect(0, centro.y() - 70, self.width(), 60), Qt.AlignCenter, "📷")
-            p.setPen(QColor(SUAVE))
-            p.setFont(QFont("Segoe UI", 12))
-            p.drawText(QRect(20, centro.y() - 5, self.width() - 40, 40), Qt.AlignCenter, self._aviso)
+        p.fillRect(self.rect(), QColor(TINTA))
 
         if self._respuesta is not None:  # la respuesta tapa todo lo demás
             self._pintar_respuesta(p)
             p.end()
             return
 
-        if self._grabando:
-            pastilla = QRectF(14, 14, 170, 32)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(127, 29, 29, 210))
-            p.drawRoundedRect(pastilla, 16, 16)
-            p.setBrush(QColor("#f87171"))
-            p.drawEllipse(QRectF(28, 24, 12, 12))
-            p.setPen(QColor("#fee2e2"))
-            p.setFont(QFont("Segoe UI Semibold", 10))
-            p.drawText(pastilla.adjusted(34, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, "Grabando seña")
+        if self._imagen is not None:
+            escalada = self._imagen.size().scaled(self.size(), Qt.KeepAspectRatio)
+            destino = QRect(QPoint(0, 0), escalada)
+            destino.moveCenter(self.rect().center())
+            p.drawImage(destino, self._imagen)
+            if self._recuadro:
+                self._pintar_recuadro(p, destino)
+            if self._guia is not None:
+                self._pintar_guia(p, destino)
+            self._pintar_estado(p)
+        else:
+            p.setPen(QColor(APAGADO))
+            p.setFont(fuente(12))
+            p.drawText(self.rect().adjusted(24, 0, -24, 0), Qt.AlignCenter | Qt.TextWordWrap, self._aviso)
 
         if self._pendiente is not None:
             self._pintar_pendiente(p)
+            p.setOpacity(1.0)
 
         if self._banda:
-            p.setFont(QFont("Segoe UI Semibold", 11))
+            p.setFont(fuente(10.5))
+            metricas = QFontMetrics(p.font())
+            ancho = min(metricas.horizontalAdvance(self._banda) + 40, self.width() - 32)
+            alto = metricas.boundingRect(QRect(0, 0, ancho - 40, 200), Qt.TextWordWrap, self._banda).height() + 20
             # con una palabra pendiente abajo, el aviso sube para no taparla
-            y_banda = 56 if self._pendiente is not None else self.height() - 62
-            banda = QRectF(16, y_banda, self.width() - 32, 44)
+            y = 16 if self._pendiente is not None else self.height() - alto - 16
+            banda = QRectF(16, y, ancho, alto)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(120, 53, 15, 225))
-            p.drawRoundedRect(banda, 12, 12)
-            p.setPen(QColor("#fde68a"))
-            p.drawText(banda.adjusted(12, 0, -12, 0), Qt.AlignCenter | Qt.TextWordWrap, self._banda)
-
+            p.setBrush(QColor(22, 24, 29, 225))
+            p.drawRoundedRect(banda, 4, 4)
+            p.setBrush(QColor(OCRE))
+            p.drawRect(QRectF(banda.left(), banda.top(), 3, banda.height()))
+            p.setPen(QColor(PAPEL))
+            p.drawText(banda.adjusted(18, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap, self._banda)
         p.end()
 
+    def _pintar_estado(self, p: QPainter) -> None:
+        """Una sola indicación arriba a la derecha: «en vivo» o «leyendo seña»."""
+        texto, color = ("leyendo seña", OCRE) if self._grabando else ("en vivo", AZUL)
+        p.setFont(fuente(10, QFont.Medium))
+        ancho = QFontMetrics(p.font()).horizontalAdvance(texto)
+        x = self.width() - ancho - 22
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(color))
+        p.drawEllipse(QRectF(x - 14, 22, 8, 8))
+        p.setPen(QColor(PAPEL))
+        p.drawText(QRect(x, 14, ancho + 4, 24), Qt.AlignVCenter | Qt.AlignLeft, texto)
+
+    def _pintar_recuadro(self, p: QPainter, d: QRect) -> None:
+        """Recuadro donde va la mano en el deletreo (como en la propuesta de diseño)."""
+        alto = d.height() * 0.8
+        ancho = min(alto * 0.88, d.width() * 0.6)
+        rect = QRectF(d.center().x() - ancho / 2, d.center().y() - alto / 2, ancho, alto)
+        p.setPen(QPen(QColor(255, 255, 255, 110), 1.5))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(rect)
+
+    def _pintar_guia(self, p: QPainter, d: QRect) -> None:
+        """Silueta (cabeza, hombros y torso) en la posición en que se grabaron los datos de entrenamiento."""
+        ok = self._guia == "ok"
+        color = QColor(AZUL if ok else OCRE)
+        color.setAlpha(170 if ok else 220)
+        lapiz = QPen(color, 2.2, Qt.DashLine)
+        p.setPen(lapiz)
+        p.setBrush(Qt.NoBrush)
+        # proporciones medidas en LSC-54 (ver config.ENCUADRE_*), relativas a la imagen
+        ancho_h = d.width() * sum(config.ENCUADRE_HOMBROS) / 2 * 0.95
+        cx, y_h, y_n = d.center().x(), d.top() + 0.50 * d.height(), d.top() + 0.31 * d.height()
+        radio = ancho_h * 0.32
+        p.drawEllipse(QRectF(cx - radio, y_n - radio * 1.15, 2 * radio, 2.3 * radio))
+        torso = QPainterPath()
+        torso.moveTo(cx - ancho_h / 2 - 10, d.bottom())
+        torso.lineTo(cx - ancho_h / 2, y_h)
+        torso.quadTo(cx, y_h - radio * 0.6, cx + ancho_h / 2, y_h)
+        torso.lineTo(cx + ancho_h / 2 + 10, d.bottom())
+        p.drawPath(torso)
+        p.setPen(Qt.NoPen)
+
     def _pintar_pendiente(self, p: QPainter) -> None:
-        opciones, provisional, progreso = self._pendiente
-        ancho = min(self.width() - 32, 560)
-        tarjeta = QRectF((self.width() - ancho) / 2, self.height() - 134, ancho, 118)
-        color = QColor(OK if provisional else ALERTA)
+        opciones, escrita, progreso = self._pendiente
+        ancho = min(self.width() - 32, 520)
+        # Entrada: sube 28 px y aparece en ~0,22 s (el video se repinta a 30 cuadros/s, así que se anima solo)
+        t = min((time.monotonic() - self._pendiente_desde) / 0.22, 1.0)
+        entrada = 1 - (1 - t) ** 3
+        p.setOpacity(0.25 + 0.75 * entrada)
+        tarjeta = QRectF((self.width() - ancho) / 2, self.height() - 128 + 28 * (1 - entrada), ancho, 112)
+        color = QColor(AZUL if escrita else OCRE)
+        p.setPen(QPen(QColor(LINEA), 1))
+        p.setBrush(QColor(BLANCO))
+        p.drawRoundedRect(tarjeta, 6, 6)
+        interior = tarjeta.adjusted(20, 12, -20, -14)
+        p.setFont(fuente(9, QFont.DemiBold))
         p.setPen(color)
-        p.setBrush(QColor(2, 6, 23, 230))
-        p.drawRoundedRect(tarjeta, 14, 14)
-        interior = tarjeta.adjusted(18, 10, -18, -12)
-        p.setFont(QFont("Segoe UI Semibold", 9))
-        p.setPen(color)
-        p.drawText(interior, Qt.AlignTop | Qt.AlignLeft,
-                   "SE ESCRIBIRÁ…" if provisional else "¿QUISO DECIR…?")
-        p.setPen(QColor(TEXTO))
-        if provisional:
-            p.setFont(QFont("Segoe UI Semibold", 26))
-            p.drawText(interior.adjusted(0, 14, 0, -22), Qt.AlignCenter, opciones[0])
-            pie = "Espacio: confirmar  ·  1–3: cambiar  ·  X: descartar"
+        p.drawText(interior, Qt.AlignTop | Qt.AlignLeft, "ESCRITA" if escrita else "¿QUISISTE DECIR?")
+        p.setPen(QColor(TINTA))
+        if escrita:
+            p.setFont(fuente(24, QFont.Bold))
+            p.drawText(interior.adjusted(0, 12, 0, -20), Qt.AlignCenter, opciones[0].upper())
+            pie = "¿No era?  " + "   ".join(f"{i + 2} {o}" for i, o in enumerate(opciones[1:])) + "   ·   X borrar"
         else:
-            p.setFont(QFont("Segoe UI Semibold", 17))
-            texto = "     ".join(f"{i + 1}  {o}" for i, o in enumerate(opciones))
-            p.drawText(interior.adjusted(0, 14, 0, -22), Qt.AlignCenter, texto)
-            pie = "Elija con 1, 2 o 3  ·  X: descartar  ·  si nadie elige, no se escribe"
-        p.setFont(QFont("Segoe UI", 9))
-        p.setPen(QColor(SUAVE))
+            p.setFont(fuente(16, QFont.Medium))
+            p.drawText(interior.adjusted(0, 12, 0, -20), Qt.AlignCenter,
+                       "      ".join(f"{i + 1}  {o}" for i, o in enumerate(opciones)))
+            pie = "Elige con 1, 2 o 3  ·  X descartar  ·  si nadie elige, no se escribe"
+        p.setFont(fuente(9))
+        p.setPen(QColor(GRAFITO))
         p.drawText(interior, Qt.AlignBottom | Qt.AlignHCenter, pie)
-        # barra del plazo: se llena hasta que la palabra se escribe (o la sugerencia desaparece)
-        barra = QRectF(tarjeta.left() + 14, tarjeta.bottom() - 6, (ancho - 28) * progreso, 3)
+        # barra del plazo: se llena hasta que termina el tiempo para corregir (o la sugerencia desaparece)
         p.setPen(Qt.NoPen)
         p.setBrush(color)
-        p.drawRoundedRect(barra, 1.5, 1.5)
+        p.drawRect(QRectF(tarjeta.left(), tarjeta.bottom() - 3, ancho * progreso, 3))
 
     def _pintar_respuesta(self, p: QPainter) -> None:
-        p.fillRect(self.rect(), QColor(2, 6, 23, 235))
-        margen = 28
-        p.setPen(QColor(SUAVE))
-        p.setFont(QFont("Segoe UI Semibold", 11))
-        p.drawText(QRect(margen, margen, self.width() - 2 * margen, 24), Qt.AlignLeft,
-                   "💬  RESPUESTA DE LA PERSONA OYENTE")
-        area = QRect(margen, margen + 40, self.width() - 2 * margen, self.height() - 2 * margen - 80)
+        p.setOpacity(self._alfa_respuesta)
+        p.fillRect(self.rect(), QColor(PAPEL))
+        margen = 32
+        p.setPen(QColor(AZUL))
+        p.setFont(fuente(10, QFont.DemiBold))
+        p.drawText(QRect(margen, margen, self.width() - 2 * margen, 24), Qt.AlignLeft, "RESPUESTA")
+        con_senas = self.animacion is not None and self.animacion.isVisible()
+        ancho_texto = int(self.width() * 0.6) if con_senas else self.width() - 2 * margen
+        area = QRect(margen, margen + 36, ancho_texto - (margen if con_senas else 0), self.height() - 2 * margen - 76)
         # Letra tan grande como quepa (entre 18 y 60 pt), para leerla a distancia
         tam = 60
         while tam > 18:
-            ocupado = QFontMetrics(QFont("Segoe UI Semibold", tam)).boundingRect(
-                area, Qt.TextWordWrap | Qt.AlignCenter, self._respuesta)
+            ocupado = QFontMetrics(fuente(tam, QFont.Medium)).boundingRect(
+                area, Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignVCenter, self._respuesta)
             if ocupado.height() <= area.height() and ocupado.width() <= area.width():
                 break
             tam -= 2
-        p.setFont(QFont("Segoe UI Semibold", tam))
-        p.setPen(QColor(TEXTO))
-        p.drawText(area, Qt.TextWordWrap | Qt.AlignCenter, self._respuesta)
-        p.setPen(QColor(TENUE))
-        p.setFont(QFont("Segoe UI", 10))
-        p.drawText(QRect(0, self.height() - margen - 20, self.width(), 20), Qt.AlignCenter,
+        p.setFont(fuente(tam, QFont.Medium))
+        p.setPen(QColor(TINTA))
+        p.drawText(area, Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignVCenter, self._respuesta)
+        p.setPen(QColor(GRAFITO))
+        p.setFont(fuente(10))
+        p.drawText(QRect(margen, self.height() - margen - 20, self.width(), 20), Qt.AlignLeft,
                    "Clic sobre el video o Esc para cerrar")
 
 
@@ -440,144 +592,140 @@ class FlujoLayout(QLayout):
         return y + alto_fila - rect.y()
 
 
+class BotonResponder(QPushButton):
+    """«Responder  Ctrl+R»: el atajo en tipografía mono, como en la propuesta de diseño."""
+
+    def __init__(self, accion) -> None:
+        super().__init__()
+        self.setObjectName("azul")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.clicked.connect(accion)
+        fila = QHBoxLayout(self)
+        fila.setContentsMargins(20, 0, 20, 0)
+        fila.setSpacing(10)
+        for texto, nombre in (("Responder", "azul_texto"), ("Ctrl+R", "azul_atajo")):
+            etiqueta = _etiqueta(texto, nombre)
+            etiqueta.setAttribute(Qt.WA_TransparentForMouseEvents)
+            fila.addWidget(etiqueta)
+        self.setMinimumSize(190, 42)
+
+
 # ---------------------------------------------------------------------------- ventana
 class VentanaPrincipal(QWidget):
     def __init__(self, controlador: ControladorSILVA) -> None:
         super().__init__()
+        cargar_fuentes()
         self.ctrl = controlador
         self._candado = threading.Lock()
         self._trabajador: TrabajadorVideo | None = None
         self._chips: dict[str, QLabel] = {}
         self._chip_activo: str | None = None
         self._dialogo_historial: QDialog | None = None
+        self._confirmada_hasta = 0.0  # mientras tanto la barra queda azul: «confirmada y agregada al texto»
+        self._ultima_resolucion = ""
+        self._sugerencias = Sugerencias()
+        try:
+            self._animaciones: AnimacionesSenas | None = AnimacionesSenas()
+        except FileNotFoundError:
+            self._animaciones = None
         self.mostrar_error = self._mostrar_error  # reemplazable en pruebas
 
         self.setObjectName("raiz")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setWindowTitle(f"SILVA {__version__} — Traductor de señas a texto")
+        self.setWindowTitle("SILVA")
         if config.RUTA_ICONO.exists():
             self.setWindowIcon(QIcon(str(config.RUTA_ICONO)))
         self.setStyleSheet(HOJA_ESTILO)
         self._construir()
+        self._ajustes = DialogoAjustes(self)
         self._atajos()
         self._mostrar_inactivo()
+        if self.ctrl.palabras_disponibles and self.ctrl.modo != MODO_PALABRAS:
+            self.ctrl.cambiar_modo(MODO_PALABRAS)  # Palabras es el modo principal; Deletreo, el complemento
         self._aplicar_modo()
-        self.resize(1180, 820)
+        self.resize(1280, 820)
+
+    @property
+    def combo_camara(self) -> QComboBox:
+        return self._ajustes.combo_camara
 
     # --------------------------------------------------------------- construcción
     def _construir(self) -> None:
         raiz = QVBoxLayout(self)
-        raiz.setContentsMargins(22, 18, 22, 18)
-        raiz.setSpacing(14)
+        raiz.setContentsMargins(0, 0, 0, 0)
+        raiz.setSpacing(0)
+        raiz.addWidget(self._cabecera())
 
-        # Encabezado
-        cab = QHBoxLayout()
-        cab.addWidget(_etiqueta("SILVA", "titulo"))
-        cab.addSpacing(8)
-        cab.addWidget(_etiqueta("Traductor de señas LSC a texto", "subtitulo"), 0, Qt.AlignBottom)
-        cab.addSpacing(24)
-        selector = QFrame()
-        selector.setObjectName("selector")
-        fila_sel = QHBoxLayout(selector)
-        fila_sel.setContentsMargins(3, 3, 3, 3)
-        fila_sel.setSpacing(2)
+        cuerpo = QHBoxLayout()
+        cuerpo.setSpacing(0)
+        izquierda = QVBoxLayout()
+        izquierda.setContentsMargins(24, 24, 24, 14)
+        izquierda.setSpacing(10)
+        self.video = VideoWidget()
+        if self._animaciones is not None:
+            self.video.usar_animaciones(self._animaciones)
+        izquierda.addWidget(self.video, 1)
+        fila = QHBoxLayout()
+        self.lbl_fps = _etiqueta("", "info_camara")
+        fila.addWidget(self.lbl_fps)
+        fila.addStretch()
+        self.btn_cambiar_camara = _boton("Cambiar cámara", "enlace", self.cambiar_camara)
+        self.btn_cambiar_camara.setToolTip("Pasa a la siguiente cámara, por ejemplo el celular como cámara web\n"
+                                           "(Enlace Móvil de Windows 11, DroidCam o Iriun). También en Ajustes.")
+        fila.addWidget(self.btn_cambiar_camara)
+        izquierda.addLayout(fila)
+        cuerpo.addLayout(izquierda, 1)
+        cuerpo.addWidget(self._panel_lateral())
+        raiz.addLayout(cuerpo, 1)
+
+        raiz.addWidget(self._zona_texto())
+        raiz.addWidget(self._barra())
+
+    def _cabecera(self) -> QFrame:
+        cab = QFrame()
+        cab.setObjectName("cabecera")
+        fila = QHBoxLayout(cab)
+        fila.setContentsMargins(26, 0, 22, 0)
+        fila.setSpacing(0)
+        if config.RUTA_MARCA.exists():
+            marca = QLabel()
+            marca.setPixmap(QPixmap(str(config.RUTA_MARCA)).scaledToHeight(26, Qt.SmoothTransformation))
+            fila.addWidget(marca)
+            fila.addSpacing(12)
+        fila.addWidget(_etiqueta("SILVA", "marca_texto"))
+        fila.addSpacing(40)
         self.grupo_modo = QButtonGroup(self)
         self.btn_modo: dict[str, QPushButton] = {}
-        for modo, texto in ((MODO_LETRAS, "Deletreo"), (MODO_PALABRAS, "Palabras")):
-            b = _boton(texto, "modo", lambda _=False, m=modo: self.cambiar_modo(m))
+        for modo, texto in ((MODO_PALABRAS, "Palabras"), (MODO_LETRAS, "Deletreo")):  # Palabras primero: el modo principal
+            b = _boton(texto, "pestana", lambda _=False, m=modo: self.cambiar_modo(m))
             b.setCheckable(True)
             self.grupo_modo.addButton(b)
-            fila_sel.addWidget(b)
+            fila.addWidget(b, 0, Qt.AlignBottom)
             self.btn_modo[modo] = b
         if not self.ctrl.palabras_disponibles:
             self.btn_modo[MODO_PALABRAS].setEnabled(False)
             self.btn_modo[MODO_PALABRAS].setToolTip("Falta modelos/modelo_palabras.pkl")
-        cab.addWidget(selector, 0, Qt.AlignVCenter)
-        cab.addSpacing(12)
-        self.combo_camara = QComboBox()
-        self.combo_camara.setObjectName("camara")
-        self.combo_camara.setFocusPolicy(Qt.NoFocus)
-        self.combo_camara.addItems(["📷  Cámara 1 (integrada)", "📷  Cámara 2", "📷  Cámara 3", "📷  Cámara 4"])
-        self.combo_camara.setCurrentIndex(getattr(self.ctrl.captura, "indice", 0))
-        self.combo_camara.setToolTip(
-            "Elija otra cámara, por ejemplo el celular como cámara web (con Enlace Móvil de Windows 11\n"
-            "o una app como DroidCam o Iriun). El celular se puede ubicar más lejos y apuntar mejor.")
-        self.combo_camara.currentIndexChanged.connect(self._cambiar_camara)
-        cab.addWidget(self.combo_camara, 0, Qt.AlignVCenter)
-        cab.addStretch()
-        self.lbl_pastilla = _etiqueta("", "pastilla")
-        cab.addWidget(self.lbl_pastilla, 0, Qt.AlignVCenter)
-        self.lbl_fps = _etiqueta("", "tenue")
-        self.lbl_fps.setMinimumWidth(56)
-        self.lbl_fps.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        cab.addWidget(self.lbl_fps, 0, Qt.AlignVCenter)
-        raiz.addLayout(cab)
-
-        # Cuerpo: video + panel lateral
-        cuerpo = QHBoxLayout()
-        cuerpo.setSpacing(14)
-        self.video = VideoWidget()
-        cuerpo.addWidget(self.video, 1)
-        cuerpo.addWidget(self._panel_lateral())
-        raiz.addLayout(cuerpo, 1)
-
-        # Texto de la sesión
-        caja = _tarjeta()
-        v = QVBoxLayout(caja)
-        v.setContentsMargins(20, 12, 20, 14)
-        fila = QHBoxLayout()
-        fila.addWidget(_etiqueta("TEXTO DE LA SESIÓN", "seccion"))
         fila.addStretch()
-        self.lbl_sesion = _etiqueta("", "tenue")
-        fila.addWidget(self.lbl_sesion)
-        v.addLayout(fila)
-        self.lbl_texto = _etiqueta("", "texto")
-        self.lbl_texto.setWordWrap(True)
-        self.lbl_texto.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.lbl_texto.setMinimumHeight(84)
-        self.lbl_texto.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        v.addWidget(self.lbl_texto)
-        raiz.addWidget(caja)
-
-        # Botones
-        barra = QHBoxLayout()
-        barra.setSpacing(8)
-        self.btn_principal = _boton("", "primario", self.alternar)
-        self.btn_principal.setMinimumWidth(130)
-        barra.addWidget(self.btn_principal)
-        barra.addSpacing(16)
-        self.btn_espacio = _boton("␣  Espacio", "secundario", self.espacio)
-        self.btn_borrar = _boton("⌫  Borrar", "secundario", self.borrar)
-        self.btn_limpiar = _boton("Limpiar", "secundario", self.limpiar)
-        for b in (self.btn_espacio, self.btn_borrar, self.btn_limpiar):
-            barra.addWidget(b)
-        barra.addStretch()
-        barra.addWidget(_etiqueta("Enter: iniciar/detener · Espacio · Retroceso · Supr · Ctrl+R: responder",
-                                  "tenue"))
-        barra.addSpacing(12)
-        self.btn_responder = _boton("💬  Responder", "secundario", self.responder)
-        self.btn_responder.setToolTip("La persona oyente escribe su respuesta y se muestra en grande (Ctrl+R)")
-        barra.addWidget(self.btn_responder)
-        barra.addWidget(_boton("🕘  Historial", "secundario", self.ver_historial))
-        raiz.addLayout(barra)
+        fila.addWidget(_boton("Historial", "cabecera_enlace", self.ver_historial))
+        fila.addWidget(_boton("Ajustes", "cabecera_enlace", self.ver_ajustes))
+        return cab
 
     def _panel_lateral(self) -> QFrame:
-        panel = _tarjeta()
-        panel.setFixedWidth(330)
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel.setFixedWidth(370)
         v = QVBoxLayout(panel)
-        v.setContentsMargins(20, 18, 20, 18)
-        v.setSpacing(6)
+        v.setContentsMargins(28, 22, 28, 22)
+        v.setSpacing(0)
 
-        self.lbl_titulo_det = _etiqueta("LETRA DETECTADA", "seccion")
+        self.lbl_titulo_det = _etiqueta("Letra detectada", "seccion")
         v.addWidget(self.lbl_titulo_det)
-        self.marco_detectada = QFrame()
-        self.marco_detectada.setObjectName("detectada")
-        self.marco_detectada.setFixedHeight(120)
-        dentro = QVBoxLayout(self.marco_detectada)
+        fila = QHBoxLayout()
         self.lbl_letra = _etiqueta("–", "letra")
-        self.lbl_letra.setAlignment(Qt.AlignCenter)
+        self.lbl_letra.setMinimumHeight(110)
+        self.lbl_letra.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.lbl_letra.setWordWrap(True)
-        dentro.addWidget(self.lbl_letra)
         self._opacidad = QGraphicsOpacityEffect(self.lbl_letra)
         self._opacidad.setOpacity(1.0)
         self.lbl_letra.setGraphicsEffect(self._opacidad)
@@ -586,80 +734,87 @@ class VentanaPrincipal(QWidget):
         self._animacion.setStartValue(0.15)
         self._animacion.setEndValue(1.0)
         self._animacion.setEasingCurve(QEasingCurve.OutCubic)
-        v.addWidget(self.marco_detectada)
-        v.addSpacing(10)
-
-        fila = QHBoxLayout()
-        fila.addWidget(_etiqueta("Confianza", "suave"))
-        fila.addStretch()
-        self.lbl_conf = _etiqueta("—", "valorconf")
-        fila.addWidget(self.lbl_conf)
+        fila.addWidget(self.lbl_letra, 1)
+        columna = QVBoxLayout()
+        columna.addStretch()
+        self.lbl_conf = _etiqueta("", "porcentaje")
+        self.lbl_conf.setAlignment(Qt.AlignRight)
+        columna.addWidget(self.lbl_conf)
+        self.lbl_conf_txt = _etiqueta("confianza", "tenue")
+        self.lbl_conf_txt.setAlignment(Qt.AlignRight)
+        columna.addWidget(self.lbl_conf_txt)
+        columna.addSpacing(8)
+        fila.addLayout(columna)
         v.addLayout(fila)
-        self.barra_conf = QProgressBar()
-        self.barra_conf.setObjectName("conf")
-        self.barra_conf.setTextVisible(False)
-        v.addWidget(self.barra_conf)
-        v.addSpacing(8)
-
-        fila = QHBoxLayout()
-        self.lbl_estable_tit = _etiqueta("Estabilidad", "suave")
-        fila.addWidget(self.lbl_estable_tit)
-        fila.addStretch()
-        self.lbl_estable_info = _etiqueta("", "tenue")
-        fila.addWidget(self.lbl_estable_info)
-        v.addLayout(fila)
-        self.barra_estable = QProgressBar()
-        self.barra_estable.setTextVisible(False)
+        v.addSpacing(6)
+        self.barra_estable = BarraSegmentos(self.ctrl.buffer.cuadros_estables)
         v.addWidget(self.barra_estable)
-        v.addSpacing(8)
-
-        self.lbl_ultima = _etiqueta("", "ultima")
+        v.addSpacing(10)
+        self.lbl_ultima = _etiqueta("", "estado")
         self.lbl_ultima.setWordWrap(True)
         self.lbl_ultima.setMinimumHeight(22)
         v.addWidget(self.lbl_ultima)
-        v.addSpacing(8)
+        v.addSpacing(20)
+        v.addWidget(_separador())
+        v.addSpacing(20)
 
-        # RF-13: confirmar o corregir la palabra reconocida antes de que se escriba
-        self.panel_pendiente = QFrame()
-        self.panel_pendiente.setObjectName("pendiente")
-        vp = QVBoxLayout(self.panel_pendiente)
-        vp.setContentsMargins(12, 10, 12, 12)
-        vp.setSpacing(6)
-        self.lbl_pendiente = _etiqueta("", "seccion")
-        vp.addWidget(self.lbl_pendiente)
-        self.btn_opciones = []
-        for i in range(3):
-            b = _boton("", "opcion", lambda _=False, k=i: self.elegir(k))
-            vp.addWidget(b)
-            self.btn_opciones.append(b)
-        fila_p = QHBoxLayout()
-        fila_p.setSpacing(6)
-        self.btn_confirmar = _boton("✓  Confirmar", "secundario", lambda: self.elegir(0))
-        self.btn_descartar = _boton("✕  Descartar", "secundario", self.descartar)
-        fila_p.addWidget(self.btn_confirmar)
-        fila_p.addWidget(self.btn_descartar)
-        vp.addLayout(fila_p)
-        self.panel_pendiente.hide()
-        v.addWidget(self.panel_pendiente)
-
-        # Letras o palabras disponibles (QStackedWidget: el panel no cambia de alto al cambiar de modo)
+        # Abecedario o vocabulario (QStackedWidget: el panel no cambia de alto al cambiar de modo)
         self.pila = QStackedWidget()
-        self.pila.addWidget(self._lista_disponibles(
-            "LETRAS DISPONIBLES", list(getattr(self.ctrl.clasificador, "letras", []))))
-        palabras = sorted(self.ctrl.clasificador_palabras.nombres.values()) if self.ctrl.palabras_disponibles else []
-        self.pila.addWidget(self._lista_disponibles(
-            "PALABRAS DISPONIBLES", palabras, "Empiece con las manos abajo, haga la seña y vuelva a bajarlas."))
+        self.pila.addWidget(self._abecedario())
+        self.pila.addWidget(self._vocabulario())
         v.addWidget(self.pila, 1)
         return panel
 
-    def _lista_disponibles(self, titulo: str, elementos: list[str], consejo: str = "") -> QWidget:
+    def _abecedario(self) -> QWidget:
         caja = QWidget()
         v = QVBoxLayout(caja)
         v.setContentsMargins(0, 0, 0, 0)
-        v.addWidget(_etiqueta(titulo, "seccion"))
+        v.setSpacing(12)
+        letras = set(self.ctrl.letras)
+        fila = QHBoxLayout()
+        fila.addWidget(_etiqueta("Abecedario", "seccion"))
+        fila.addStretch()
+        fila.addWidget(_etiqueta(f"{len(letras)} de {len(config.LETRAS)}", "tenue"))
+        v.addLayout(fila)
+        rejilla = QGridLayout()
+        rejilla.setHorizontalSpacing(4)
+        rejilla.setVerticalSpacing(8)
+        con_trazo = set(self.ctrl.clasificador_movimiento.letras) if self.ctrl.clasificador_movimiento else set()
+        for i, letra in enumerate(config.LETRAS):
+            etiqueta = _etiqueta(letra, "letra_abc")
+            etiqueta.setAlignment(Qt.AlignCenter)
+            etiqueta.setProperty("apagada", letra not in letras)
+            if letra in con_trazo:
+                etiqueta.setToolTip(f"La {letra} se hace con movimiento")
+            rejilla.addWidget(etiqueta, i // 9, i % 9)
+            self._chips[letra] = etiqueta
+        v.addLayout(rejilla)
+        nota = ("Las letras en gris aún no se reconocen." if len(letras) < len(config.LETRAS) else "")
+        if con_trazo:
+            nota += (" " if nota else "") + (f"{', '.join(sorted(con_trazo, key=config.LETRAS.index)[:-1])} y "
+                                             f"{sorted(con_trazo, key=config.LETRAS.index)[-1]} se trazan: haz el "
+                                             "movimiento y quédate quieto al final.")
+        if nota:
+            etiqueta = _etiqueta(nota, "tenue")
+            etiqueta.setWordWrap(True)
+            v.addWidget(etiqueta)
+        v.addStretch()
+        return caja
+
+    def _vocabulario(self) -> QWidget:
+        caja = QWidget()
+        v = QVBoxLayout(caja)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+        palabras = sorted(self.ctrl.clasificador_palabras.nombres.values()) if self.ctrl.palabras_disponibles else []
+        fila = QHBoxLayout()
+        fila.addWidget(_etiqueta("Vocabulario", "seccion"))
+        fila.addStretch()
+        fila.addWidget(_etiqueta(f"{len(palabras)} palabras", "tenue"))
+        v.addLayout(fila)
         flujo_w = QWidget()
-        flujo = FlujoLayout(5)
-        flujo.setContentsMargins(0, 4, 4, 0)
+        flujo = FlujoLayout(4)
+        flujo.setContentsMargins(0, 0, 4, 0)
         flujo_w.setLayout(flujo)
         desplazable = QScrollArea()  # si no caben todas, se desplazan sin agrandar el panel
         desplazable.setWidgetResizable(True)
@@ -667,20 +822,107 @@ class VentanaPrincipal(QWidget):
         desplazable.setWidget(flujo_w)
         desplazable.viewport().setAutoFillBackground(False)
         flujo_w.setAutoFillBackground(False)
-        for e in elementos:
-            chip = _etiqueta(e, "chip")
-            if len(e) == 1:
-                chip.setMinimumWidth(30)
-                chip.setAlignment(Qt.AlignCenter)
+        for e in palabras:
+            chip = _etiqueta(e, "palabra_voc")
+            if self._animaciones is not None and e in self._animaciones.nombres:
+                chip.setCursor(Qt.PointingHandCursor)
+                chip.setToolTip(f"Ver cómo se hace la seña «{e}»")
+                chip.mousePressEvent = lambda _ev, nombre=e: self.ver_sena(nombre)
             flujo.addWidget(chip)
             self._chips[e] = chip
         v.addWidget(desplazable, 1)
-        if consejo:
-            nota = _etiqueta(consejo, "tenue")
-            nota.setWordWrap(True)
-            v.addSpacing(6)
-            v.addWidget(nota)
+        nota = _etiqueta("Empieza con las manos abajo, haz la seña y vuelve a bajarlas. "
+                         "Clic en una palabra para ver su seña.", "tenue")
+        nota.setWordWrap(True)
+        v.addWidget(nota)
         return caja
+
+    def _zona_texto(self) -> QFrame:
+        zona = QFrame()
+        zona.setObjectName("texto_zona")
+        v = QVBoxLayout(zona)
+        v.setContentsMargins(26, 16, 26, 14)
+        v.setSpacing(4)
+        fila = QHBoxLayout()
+        fila.addWidget(_etiqueta("Texto", "seccion"))
+        fila.addStretch()
+        self.btn_voz = _boton("Leer en voz alta", "accion", self.leer_en_voz_alta)
+        self.btn_copiar = _boton("Copiar", "accion", self.copiar)
+        fila.addWidget(self.btn_voz)
+        fila.addSpacing(8)
+        fila.addWidget(self.btn_copiar)
+        v.addLayout(fila)
+        self.lbl_texto = _etiqueta("", "texto")
+        self.lbl_texto.setWordWrap(True)
+        self.lbl_texto.setTextFormat(Qt.RichText)
+        self.lbl_texto.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.lbl_texto.setMinimumHeight(62)
+        self.lbl_texto.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(self.lbl_texto)
+
+        # «¿Quisiste decir?»: palabras para completar (Deletreo) …
+        self.fila_sugerencias = QWidget()
+        fs = QHBoxLayout(self.fila_sugerencias)
+        fs.setContentsMargins(0, 0, 0, 0)
+        fs.setSpacing(6)
+        fs.addWidget(_etiqueta("¿Quisiste decir?", "estado"))
+        self.btn_sugerencias = []
+        for _ in range(3):
+            b = _boton("", "enlace", lambda: None)
+            b.clicked.disconnect()
+            b.clicked.connect(lambda _=False, boton=b: self.completar(boton.text()))
+            fs.addWidget(b)
+            self.btn_sugerencias.append(b)
+        fs.addStretch()
+        v.addWidget(self.fila_sugerencias)
+
+        # … o, en Palabras, las opciones de la palabra reconocida (RF-13)
+        self.panel_pendiente = QWidget()
+        fp = QHBoxLayout(self.panel_pendiente)
+        fp.setContentsMargins(0, 0, 0, 0)
+        fp.setSpacing(6)
+        self.lbl_pendiente = _etiqueta("", "estado")
+        fp.addWidget(self.lbl_pendiente)
+        self.btn_opciones = []
+        for i in range(3):
+            b = _boton("", "enlace", lambda _=False, k=i: self.elegir(k))
+            fp.addWidget(b)
+            self.btn_opciones.append(b)
+        fp.addSpacing(10)
+        self.btn_confirmar = _boton("Era correcta", "enlace_gris", lambda: self.elegir(0))
+        self.btn_descartar = _boton("Descartar", "enlace_gris", self.descartar)
+        fp.addWidget(self.btn_confirmar)
+        fp.addWidget(self.btn_descartar)
+        fp.addStretch()
+        self.panel_pendiente.hide()
+        v.addWidget(self.panel_pendiente)
+        alto = max(self.fila_sugerencias.sizeHint().height(), self.panel_pendiente.sizeHint().height())
+        for w in (self.fila_sugerencias, self.panel_pendiente):
+            w.setFixedHeight(alto)
+        return zona
+
+    def _barra(self) -> QFrame:
+        barra = QFrame()
+        barra.setObjectName("barra")
+        fila = QHBoxLayout(barra)
+        fila.setContentsMargins(24, 12, 24, 12)
+        fila.setSpacing(8)
+        self.btn_principal = _boton("", "primario", self.alternar)
+        self.btn_principal.setMinimumWidth(110)
+        fila.addWidget(self.btn_principal)
+        self.btn_espacio = _boton("Espacio", "secundario", self.espacio)
+        self.btn_borrar = _boton("Borrar letra", "secundario", self.borrar)
+        self.btn_limpiar = _boton("Limpiar", "plano", self.limpiar)
+        for b in (self.btn_espacio, self.btn_borrar, self.btn_limpiar):
+            fila.addWidget(b)
+        fila.addSpacing(16)
+        self.lbl_atajos = _etiqueta("", "atajos")
+        fila.addWidget(self.lbl_atajos)
+        fila.addStretch()
+        self.btn_responder = BotonResponder(self.responder)
+        self.btn_responder.setToolTip("La persona oyente escribe su respuesta y se muestra en grande")
+        fila.addWidget(self.btn_responder)
+        return barra
 
     def _atajos(self) -> None:
         for tecla, accion in ((Qt.Key_Return, self.alternar), (Qt.Key_Enter, self.alternar),
@@ -707,7 +949,6 @@ class VentanaPrincipal(QWidget):
         if self.activo:
             return
         self.video.poner_aviso("Encendiendo la cámara…")
-        self._poner_pastilla("●  Conectando", "conectando")
         self.btn_principal.setEnabled(False)
         self._trabajador = TrabajadorVideo(self.ctrl, self._candado)
         self._trabajador.iniciado.connect(self._al_iniciar)
@@ -715,13 +956,10 @@ class VentanaPrincipal(QWidget):
         self._trabajador.cuadro_listo.connect(self._pintar)
         self._trabajador.start()
 
-    def _al_iniciar(self, sesion_id: int) -> None:
+    def _al_iniciar(self, _sesion_id: int) -> None:
         self.btn_principal.setEnabled(True)
-        self.btn_principal.setText("■  Detener")
-        _repulir(self.btn_principal, peligro=True)
-        self._poner_pastilla("●  En vivo", "vivo")
-        self.combo_camara.setEnabled(False)
-        self.lbl_sesion.setText(f"Sesión #{sesion_id}")
+        self.btn_principal.setText("Detener")
+        self._ajustes.combo_camara.setEnabled(False)
         self.lbl_ultima.setText("")
         self._actualizar_texto()
 
@@ -732,7 +970,7 @@ class VentanaPrincipal(QWidget):
         self._mostrar_inactivo()
         self.mostrar_error(
             "Cámara no disponible",
-            "No se pudo abrir la cámara web.\n\nVerifique que esté conectada y que ninguna otra "
+            "No se pudo abrir la cámara web.\n\nVerifica que esté conectada y que ninguna otra "
             "aplicación (Zoom, Teams, la app Cámara…) la esté usando.",
         )
 
@@ -743,7 +981,7 @@ class VentanaPrincipal(QWidget):
         with self._candado:
             self.ctrl.detener()  # guarda la sesión y después libera la cámara (Figura 5)
         self._mostrar_inactivo()
-        self.lbl_sesion.setText(f"Sesión #{self.ctrl.sesion_id} guardada en el historial ✓")
+        self.lbl_ultima.setText(f"Sesión #{self.ctrl.sesion_id} guardada en el historial")
 
     def _parar_trabajador(self) -> None:
         trabajador, self._trabajador = self._trabajador, None
@@ -763,46 +1001,81 @@ class VentanaPrincipal(QWidget):
     def _aplicar_modo(self) -> None:
         palabras = self.ctrl.modo == MODO_PALABRAS
         self.btn_modo[self.ctrl.modo].setChecked(True)
-        self.lbl_titulo_det.setText("PALABRA DETECTADA" if palabras else "LETRA DETECTADA")
-        self.lbl_estable_tit.setText("Seña en curso" if palabras else "Estabilidad")
-        self.lbl_estable_info.setText(
-            "" if palabras else f"{self.ctrl.buffer.cuadros_estables} cuadros para confirmar")
-        self.pila.setCurrentIndex(1 if palabras else 0)
+        self.lbl_titulo_det.setText("Palabra detectada" if palabras else "Letra detectada")
+        if self.pila.currentIndex() != (1 if palabras else 0):
+            self.pila.setCurrentIndex(1 if palabras else 0)
+            self._fundir(self.pila)
         self.btn_espacio.setVisible(not palabras)
+        self.btn_borrar.setText("Borrar palabra" if palabras else "Borrar letra")
+        self.lbl_atajos.setText("Enter iniciar/detener · 1 2 3 corregir · X borrar · Supr limpiar" if palabras else
+                                "Enter iniciar/detener · Espacio · Retroceso · Supr limpiar")
+        self.video.poner_recuadro(False)
         self._poner_letra("–", dudosa=True)
         self.lbl_ultima.setText("")
         self._poner_confianza(None)
         self._resaltar(None)
-        self.barra_estable.setValue(0)
+        self.barra_estable.poner(0)
         self.video.poner_grabando(False)
         self._mostrar_pendiente(None, 0.0)
         self._actualizar_texto()
 
+    def _fundir(self, widget: QWidget, ms: int = 280) -> None:
+        """Animación de entrada: el widget aparece con un fundido."""
+        efecto = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(efecto)
+        anim = QPropertyAnimation(efecto, b"opacity", widget)
+        anim.setDuration(ms)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.finished.connect(lambda: widget.setGraphicsEffect(None))  # sin efecto permanente (más liviano)
+        anim.start(QPropertyAnimation.DeleteWhenStopped)
+
     def _cambiar_camara(self, indice: int) -> None:
         if not self.activo:
             self.ctrl.captura.indice = indice
+            self._mostrar_info_camara()
+
+    def cambiar_camara(self) -> None:
+        """Pasa a la siguiente cámara (1 → 2 → 3 → 4 → 1); si está encendida, la reinicia con la nueva."""
+        estaba = self.activo
+        if estaba:
+            self.detener()
+        combo = self._ajustes.combo_camara
+        combo.setCurrentIndex((combo.currentIndex() + 1) % combo.count())
+        if estaba:
+            self.iniciar()
 
     def espacio(self) -> None:
-        if self.ctrl.modo == MODO_PALABRAS:  # en Palabras, Espacio confirma la palabra pendiente
+        if self.ctrl.modo == MODO_PALABRAS:  # en Palabras, Espacio da por buena la palabra
             self.elegir(0)
             return
         with self._candado:
             self.ctrl.buffer.agregar_espacio()
         self._actualizar_texto()
 
+    def completar(self, palabra: str) -> None:
+        """«¿Quisiste decir?»: completa la palabra que se está deletreando."""
+        if not palabra:
+            return
+        with self._candado:
+            self.ctrl.buffer.completar(palabra)
+        self._actualizar_texto()
+
     def elegir(self, opcion: int) -> None:
-        """RF-13: escribe la opción elegida de la palabra pendiente (0 = la más probable)."""
+        """RF-13: elige una opción de la palabra pendiente (0 = la más probable)."""
         with self._candado:
             pendiente = self.ctrl.pendiente
             escrita = self.ctrl.confirmar_pendiente(opcion)
         if escrita is not None:
             self._mostrar_pendiente(None, 0.0)
-            self._confirmar(escrita, pendiente.opciones[opcion].confianza, "Última palabra")
+            self._confirmar(escrita, pendiente.opciones[opcion].confianza)
 
     def descartar(self) -> None:
         with self._candado:
             self.ctrl.descartar_pendiente()
         self._mostrar_pendiente(None, 0.0)
+        self._actualizar_texto()
 
     def borrar(self) -> None:
         with self._candado:
@@ -814,12 +1087,40 @@ class VentanaPrincipal(QWidget):
             self.ctrl.buffer.limpiar()
         self._actualizar_texto()
 
+    def copiar(self) -> None:
+        with self._candado:
+            texto = self.ctrl.buffer.texto.strip()
+        if texto:
+            QGuiApplication.clipboard().setText(texto)
+            self.lbl_ultima.setText("Texto copiado")
+
+    def leer_en_voz_alta(self) -> None:
+        """Lee el texto con la voz de Windows (sin internet), en un hilo para no congelar la ventana."""
+        with self._candado:
+            texto = self.ctrl.buffer.texto.strip().lower()
+        if not texto or sys.platform != "win32":
+            return
+        guion = ("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                 "$v = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -like 'es*' } | "
+                 "Select-Object -First 1; if ($v) { $s.SelectVoice($v.VoiceInfo.Name) }; "
+                 "$s.Speak([Console]::In.ReadToEnd())")
+
+        def hablar() -> None:
+            try:  # el texto va por la entrada estándar, nunca dentro del comando
+                subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", guion], input=texto,
+                               text=True, encoding="utf-8", timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        threading.Thread(target=hablar, daemon=True).start()
+
     def closeEvent(self, evento) -> None:
         self._parar_trabajador()
         with self._candado:
             self.ctrl.cerrar()
-        if self._dialogo_historial is not None:
-            self._dialogo_historial.close()
+        for dialogo in (self._dialogo_historial, self._ajustes):
+            if dialogo is not None:
+                dialogo.close()
         evento.accept()
 
     # ------------------------------------------------------------- cuadros de video
@@ -828,7 +1129,9 @@ class VentanaPrincipal(QWidget):
             if not self.activo:
                 return
             self.video.poner_imagen(imagen)
-            self.lbl_fps.setText(f"{r.fps:.0f} FPS")
+            alto, ancho = r.cuadro.shape[:2]
+            self._ultima_resolucion = f"{ancho}×{alto}"
+            self._mostrar_info_camara(r.fps)
             if r.cuerpo is not None:
                 self._pintar_palabras(r)
             else:
@@ -838,106 +1141,126 @@ class VentanaPrincipal(QWidget):
                 self._trabajador.interfaz_libre.set()
 
     def _pintar_letras(self, r: ResultadoCuadro) -> None:
-        self.video.poner_grabando(False)
-        if r.prediccion is None:
-            # RF-06; con poca luz se dice la causa probable
-            self.video.poner_banda(AVISO_POCA_LUZ if r.brillo < config.BRILLO_MINIMO else "✋  No se detecta la mano")
-            self._poner_letra("–", dudosa=True)
+        self.video.poner_grabando(r.trazando)
+        self.video.poner_guia(None)
+        self.video.poner_recuadro(True)
+        estables = self.ctrl.buffer.cuadros_estables
+        if r.letra_confirmada is not None:  # RF-08
+            self._confirmar(r.letra_confirmada, r.prediccion.confianza)
+            return
+        confirmando = time.monotonic() < self._confirmada_hasta
+        if r.trazando:  # la letra se decide al terminar el trazo
+            self.video.poner_banda(None)
+            self._poner_letra("…", dudosa=True)
             self._poner_confianza(None)
             self._resaltar(None)
+            self.barra_estable.poner(int(time.monotonic() * 6) % (estables + 1))
+            self.lbl_ultima.setText("Leyendo el trazo de la letra…")
+        elif r.prediccion is None:
+            # RF-06; con poca luz se dice la causa probable
+            self.video.poner_banda(AVISO_POCA_LUZ if r.brillo < config.BRILLO_MINIMO else AVISO_SIN_MANO)
+            if not confirmando:
+                self._poner_letra("–", dudosa=True)
+                self._poner_confianza(None)
+                self._resaltar(None)
+                self.barra_estable.poner(0)
+                self.lbl_ultima.setText("Sin mano en el recuadro")
         else:
             self.video.poner_banda(None)
             p = r.prediccion
             aceptable = p.confianza >= self.ctrl.buffer.umbral
+            if confirmando and r.progreso == 0:
+                return  # se deja ver un momento «confirmada y agregada al texto»
             self._poner_letra(p.letra, dudosa=not aceptable)
             self._poner_confianza(p.confianza)
             self._resaltar(p.letra if aceptable else None)
-        self.barra_estable.setValue(int(r.progreso * 100))
-        if r.letra_confirmada is not None:  # RF-08
-            self._confirmar(r.letra_confirmada, r.prediccion.confianza, "Última confirmada")
+            k = round(r.progreso * estables)
+            self.barra_estable.poner(k)
+            self.lbl_ultima.setText(f"Leyendo seña · {k} de {estables} cuadros" if aceptable else
+                                    "Seña poco clara: sostén la mano quieta")
 
     def _pintar_palabras(self, r: ResultadoCuadro) -> None:
         self.video.poner_grabando(r.grabando_sena)
-        self.barra_estable.setValue(int(r.progreso * 100) if r.grabando_sena else 0)
-        if r.letra_confirmada is not None:  # escrita sola al vencer el plazo o al empezar otra seña
-            self._confirmar(r.letra_confirmada, self.ctrl.ultima_confianza or 0.0, "Última palabra")
+        self.video.poner_recuadro(False)
+        if r.letra_confirmada is not None:  # escrita apenas se reconoce
+            self._confirmar(r.letra_confirmada, self.ctrl.ultima_confianza or 0.0)
         self._mostrar_pendiente(r.pendiente, r.ahora)
+        if r.grabando_sena:
+            self.barra_estable.poner(max(1, math.ceil(r.progreso * 120 / 9)))
+            self.lbl_ultima.setText("Leyendo seña…")
+        elif r.pendiente is None and time.monotonic() >= self._confirmada_hasta:
+            self.barra_estable.poner(0)
+            self.lbl_ultima.setText("Manos abajo · haz la seña y vuelve a bajarlas")
+        encuadre = evaluar_encuadre(r.cuerpo)
+        # La silueta guía solo en reposo (sin seña ni palabra pendiente), para no tapar la seña
+        en_reposo = not r.grabando_sena and r.pendiente is None
+        self.video.poner_guia(("ajustar" if (encuadre or r.cuerpo.pose is None) else "ok") if en_reposo else None)
         if r.brillo < config.BRILLO_MINIMO:
             self.video.poner_banda(AVISO_POCA_LUZ)
         elif r.cuerpo.pose is None:
-            self.video.poner_banda("🧍  Colóquese frente a la cámara: deben verse los hombros y las manos")
+            self.video.poner_banda(AVISO_SIN_PERSONA)
+        elif encuadre and en_reposo:
+            self.video.poner_banda(f"{encuadre} (ubícate dentro de la silueta).")
         elif _mano_en_borde(r.cuerpo):
-            self.video.poner_banda("↔  Aléjese un poco: una mano se sale del cuadro")
+            self.video.poner_banda(AVISO_BORDE)
         else:
             self.video.poner_banda(None)
 
     def _mostrar_pendiente(self, pendiente: PalabraPendiente | None, ahora: float) -> None:
         if pendiente is None:
-            # sin palabra por corregir vuelve la lista de palabras; así el panel nunca crece
             self.panel_pendiente.hide()
-            self.pila.show()
-            self.lbl_ultima.show()
             self.video.poner_pendiente(None)
+            self._actualizar_sugerencias()
             return
-        self.pila.hide()
-        self.lbl_ultima.hide()
+        self.fila_sugerencias.hide()
         opciones = [o.letra for o in pendiente.opciones]
         self.video.poner_pendiente(opciones, pendiente.automatica, pendiente.progreso(ahora))
         mejor = pendiente.opciones[0]
         self._poner_letra(mejor.letra, dudosa=not pendiente.automatica)
         self._poner_confianza(mejor.confianza)
         if pendiente.automatica:
-            restante = max(pendiente.vence - ahora, 0.0)
-            self.lbl_pendiente.setText(f"SE ESCRIBIRÁ EN {restante:.0f} S · ¿ES CORRECTA?")
+            self.lbl_pendiente.setText("¿No era?")
+            self.barra_estable.poner(self.barra_estable.segmentos, AZUL)
+            self.lbl_ultima.setText("Palabra escrita · si no era, elige otra abajo")
         else:
-            self.lbl_pendiente.setText("¿QUISO DECIR…? ELIJA UNA OPCIÓN")
-        tipo = "provisional" if pendiente.automatica else "sugerencia"
-        if self.panel_pendiente.property("tipo") != tipo:
-            _repulir(self.panel_pendiente, tipo=tipo)
+            self.lbl_pendiente.setText("¿Quisiste decir?")
+            self.barra_estable.poner(2)
+            self.lbl_ultima.setText("Seña dudosa · elige una opción abajo")
+        inicio = 1 if pendiente.automatica else 0  # si ya se escribió, se ofrecen las otras
         for i, b in enumerate(self.btn_opciones):
-            if i < len(pendiente.opciones):
-                o = pendiente.opciones[i]
-                b.setText(f"{i + 1}   {o.letra}   ·   {o.confianza:.0%}")
+            if inicio <= i < len(pendiente.opciones):
+                b.setText(f"{pendiente.opciones[i].letra.upper()}")
+                b.setToolTip(f"Tecla {i + 1} · {pendiente.opciones[i].confianza:.0%}")
                 b.show()
-                if b.property("principal") != (i == 0 and pendiente.automatica):
-                    _repulir(b, principal=(i == 0 and pendiente.automatica))
             else:
                 b.hide()
         self.btn_confirmar.setVisible(pendiente.automatica)
+        self.btn_descartar.setText("Borrar" if pendiente.automatica else "Descartar")
         self.panel_pendiente.show()
 
-    def _confirmar(self, texto: str, confianza: float, rotulo: str) -> None:
+    def _confirmar(self, texto: str, confianza: float) -> None:
+        palabras = self.ctrl.modo == MODO_PALABRAS
         self._poner_letra(texto, dudosa=False)
         self._poner_confianza(confianza)
         self._resaltar(texto)
-        self.lbl_ultima.setText(f"✓  {rotulo}: {texto}  ·  {confianza:.0%}")
+        self.barra_estable.poner(self.barra_estable.segmentos, AZUL)
+        self.lbl_ultima.setText(f"Palabra «{texto}» escrita" if palabras else
+                                f"Letra {texto} confirmada y agregada al texto")
+        self._confirmada_hasta = time.monotonic() + 0.8
         self._actualizar_texto()
-        # Realce breve: la tarjeta se enmarca en verde y el texto aparece con un fundido
-        _repulir(self.marco_detectada, confirmada=True)
-        QTimer.singleShot(650, lambda: _repulir(self.marco_detectada, confirmada=False))
         self._animacion.stop()
         self._animacion.start()
 
     # ------------------------------------------------------------------ utilidades
     def _poner_letra(self, texto: str, dudosa: bool) -> None:
-        tam = "palabra" if self.ctrl.modo == MODO_PALABRAS and texto != "–" else "letra"
+        tam = "palabra" if self.ctrl.modo == MODO_PALABRAS and texto not in ("–", "…") else "letra"
         self.lbl_letra.setText(texto)
         if self.lbl_letra.property("dudosa") != dudosa or self.lbl_letra.property("tam") != tam:
             _repulir(self.lbl_letra, dudosa=dudosa, tam=tam)
 
     def _poner_confianza(self, confianza: float | None) -> None:
-        if confianza is None:
-            self.barra_conf.setValue(0)
-            self.lbl_conf.setText("—")
-            _repulir(self.lbl_conf, baja=False, alta=False)
-            return
-        umbral = self.ctrl.umbral_palabras if self.ctrl.modo == MODO_PALABRAS else self.ctrl.buffer.umbral
-        aceptable = confianza >= umbral
-        self.barra_conf.setValue(int(confianza * 100))
-        self.lbl_conf.setText(f"{confianza:.0%}")
-        if self.barra_conf.property("baja") != (not aceptable):
-            _repulir(self.barra_conf, baja=not aceptable)
-        _repulir(self.lbl_conf, baja=not aceptable, alta=aceptable)
+        self.lbl_conf.setText("" if confianza is None else f"{confianza:.0%}")
+        self.lbl_conf_txt.setVisible(confianza is not None)
 
     def _resaltar(self, clave: str | None) -> None:
         if clave == self._chip_activo:
@@ -948,47 +1271,73 @@ class VentanaPrincipal(QWidget):
             _repulir(self._chips[clave], activo=True)
         self._chip_activo = clave
 
-    def _poner_pastilla(self, texto: str, estado: str) -> None:
-        self.lbl_pastilla.setText(texto)
-        _repulir(self.lbl_pastilla, estado=estado)
+    def _mostrar_info_camara(self, fps: float | None = None) -> None:
+        i = getattr(self.ctrl.captura, "indice", 0)
+        nombre = "Cámara integrada" if i == 0 else f"Cámara {i + 1}"
+        if self.activo and fps is not None:
+            self.lbl_fps.setText(f"{nombre} · {self._ultima_resolucion} · {fps:.0f} fps")
+        else:
+            self.lbl_fps.setText(f"{nombre} · apagada")
 
     def _actualizar_texto(self) -> None:
         with self._candado:
             texto = self.ctrl.buffer.texto
         if texto:
-            self.lbl_texto.setText(texto + ("▏" if self.activo else ""))
+            cursor = f'<span style="color:{AZUL}; font-weight:400">|</span>' if self.activo else ""
+            self.lbl_texto.setText(_html(texto) + cursor)
         else:
             unidad = "palabras" if self.ctrl.modo == MODO_PALABRAS else "letras"
-            self.lbl_texto.setText(f"Las {unidad} confirmadas aparecerán aquí")
+            self.lbl_texto.setText(f"Las {unidad} confirmadas aparecerán aquí.")
         if self.lbl_texto.property("vacio") != (not texto):
             _repulir(self.lbl_texto, vacio=not texto)
         self.btn_borrar.setEnabled(bool(texto))
         self.btn_limpiar.setEnabled(bool(texto))
+        self.btn_copiar.setEnabled(bool(texto.strip()))
+        self.btn_voz.setEnabled(bool(texto.strip()) and sys.platform == "win32")
+        self._actualizar_sugerencias()
+
+    def _actualizar_sugerencias(self) -> None:
+        if self.ctrl.modo != MODO_LETRAS or self.panel_pendiente.isVisible():
+            self.fila_sugerencias.hide()
+            return
+        with self._candado:
+            en_curso = self.ctrl.buffer.palabra_en_curso
+        opciones = self._sugerencias.para(en_curso)
+        for b, o in zip(self.btn_sugerencias, opciones + [""] * 3):
+            b.setText(o)
+            b.setVisible(bool(o))
+        self.fila_sugerencias.setVisible(bool(opciones))
 
     def _mostrar_inactivo(self) -> None:
-        self.btn_principal.setText("▶  Iniciar")
-        _repulir(self.btn_principal, peligro=False)
-        self.video.poner_aviso("Presione «Iniciar» para encender la cámara")
-        self._poner_pastilla("●  Cámara apagada", "apagada")
-        self.combo_camara.setEnabled(True)
+        self.btn_principal.setText("Iniciar")
+        self.video.poner_aviso("Presiona «Iniciar» para encender la cámara")
+        self._ajustes.combo_camara.setEnabled(True) if hasattr(self, "_ajustes") else None
         self._mostrar_pendiente(None, 0.0)
-        self.lbl_fps.setText("")
+        self._mostrar_info_camara()
         self._poner_letra("–", dudosa=True)
         self._poner_confianza(None)
         self._resaltar(None)
-        self.barra_estable.setValue(0)
+        self.barra_estable.poner(0)
         self._actualizar_texto()
 
     def _mostrar_error(self, titulo: str, mensaje: str) -> None:
         QMessageBox.critical(self, titulo, mensaje)
 
+    def ver_ajustes(self) -> None:
+        self._ajustes.show()
+        self._ajustes.raise_()
+
+    def poner_texto_grande(self, grande: bool) -> None:
+        _repulir(self.lbl_texto, grande=grande)
+
     def ver_historial(self) -> None:
         dialogo = QDialog(self)
         dialogo.setWindowTitle("Historial")
         dialogo.setStyleSheet(HOJA_ESTILO)
-        dialogo.resize(780, 460)
+        dialogo.resize(820, 480)
         v = QVBoxLayout(dialogo)
-        v.setContentsMargins(18, 16, 18, 16)
+        v.setContentsMargins(24, 20, 24, 20)
+        v.setSpacing(12)
         v.addWidget(_etiqueta("Historial", "titulo"))
         with self._candado:
             sesiones = self.ctrl.historial.listar_sesiones()
@@ -1023,9 +1372,27 @@ class VentanaPrincipal(QWidget):
                 tabla.setItem(f, c, QTableWidgetItem(valor))
         return tabla
 
+    def ver_sena(self, nombre: str) -> None:
+        """RF-15: muestra en una ventana la animación de la seña de una palabra (para aprenderla o mostrarla)."""
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle(f"Seña: {nombre}")
+        dialogo.setStyleSheet(HOJA_ESTILO)
+        dialogo.resize(380, 470)
+        v = QVBoxLayout(dialogo)
+        v.setContentsMargins(16, 16, 16, 16)
+        animacion = AnimacionSena(self._animaciones, dialogo)
+        animacion.mostrar([nombre])
+        v.addWidget(animacion)
+        nota = _etiqueta("Vista de frente, como la verías frente a ti. Grabación de LSC-54 (Mora-Zarate, 2025).",
+                         "tenue")
+        nota.setWordWrap(True)
+        v.addWidget(nota)
+        self._dialogo_sena = dialogo
+        dialogo.show()
+
     def responder(self) -> None:
         """RF-09: la persona oyente escribe y la respuesta se muestra en grande sobre el video."""
-        dialogo = DialogoRespuesta(self)
+        dialogo = DialogoRespuesta(self, self._animaciones)
         self._dialogo_respuesta = dialogo
         dialogo.respuesta_lista.connect(self.mostrar_respuesta)
         dialogo.show()
@@ -1033,29 +1400,70 @@ class VentanaPrincipal(QWidget):
     def mostrar_respuesta(self, texto: str) -> None:
         with self._candado:
             self.ctrl.historial.registrar_respuesta(self.ctrl.sesion_id if self.activo else None, texto)
-        self.video.poner_respuesta(texto)
+        senas = self._animaciones.buscar(texto) if self._animaciones is not None else []
+        self.video.poner_respuesta(texto, senas)
+
+
+class DialogoAjustes(QDialog):
+    """Ajustes: cámara (el celular puede servir de cámara web) y tamaño del texto."""
+
+    def __init__(self, ventana: VentanaPrincipal) -> None:
+        super().__init__(ventana)
+        self.setWindowTitle("Ajustes")
+        self.setStyleSheet(HOJA_ESTILO)
+        self.resize(460, 260)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(24, 20, 24, 20)
+        v.setSpacing(10)
+        v.addWidget(_etiqueta("Ajustes", "titulo"))
+        v.addSpacing(6)
+        v.addWidget(_etiqueta("Cámara", "seccion"))
+        self.combo_camara = QComboBox()
+        self.combo_camara.setFocusPolicy(Qt.NoFocus)
+        self.combo_camara.addItems(["Cámara integrada", "Cámara 2", "Cámara 3", "Cámara 4"])
+        self.combo_camara.setCurrentIndex(getattr(ventana.ctrl.captura, "indice", 0))
+        self.combo_camara.currentIndexChanged.connect(ventana._cambiar_camara)
+        v.addWidget(self.combo_camara)
+        nota = _etiqueta("El celular también sirve de cámara web (Enlace Móvil de Windows 11, DroidCam o Iriun): "
+                         "se puede ubicar más lejos y apuntar mejor. Cambia la cámara con la cámara apagada.", "tenue")
+        nota.setWordWrap(True)
+        v.addWidget(nota)
+        v.addSpacing(6)
+        v.addWidget(_etiqueta("Tamaño del texto", "seccion"))
+        self.combo_tamano = QComboBox()
+        self.combo_tamano.addItems(["Normal", "Grande (para leer a distancia)"])
+        self.combo_tamano.currentIndexChanged.connect(lambda i: ventana.poner_texto_grande(i == 1))
+        v.addWidget(self.combo_tamano)
+        v.addStretch()
 
 
 class DialogoRespuesta(QDialog):
     respuesta_lista = Signal(str)
 
-    def __init__(self, padre: QWidget) -> None:
+    def __init__(self, padre: QWidget, animaciones: AnimacionesSenas | None = None) -> None:
         super().__init__(padre)
+        self._animaciones = animaciones
         self.setWindowTitle("Responder")
         self.setStyleSheet(HOJA_ESTILO)
-        self.resize(620, 300)
+        self.resize(640, 320)
         v = QVBoxLayout(self)
-        v.setContentsMargins(20, 18, 20, 18)
+        v.setContentsMargins(24, 20, 24, 20)
         v.setSpacing(10)
-        v.addWidget(_etiqueta("Responder a la persona sorda", "titulo"))
-        nota = _etiqueta("Escriba su respuesta; se mostrará en grande sobre el video para que la lea.", "suave")
+        v.addWidget(_etiqueta("Responder por escrito", "titulo"))
+        nota = _etiqueta("Escribe tu respuesta: se mostrará en grande sobre el video para que la persona sorda la lea.",
+                         "estado")
         nota.setWordWrap(True)
         v.addWidget(nota)
         self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText("Por ejemplo: «Siga, el médico lo atiende en 5 minutos»")
+        self.editor.setPlaceholderText("Escribe aquí")
         v.addWidget(self.editor, 1)
+        self.lbl_senas = _etiqueta("", "estado")
+        self.lbl_senas.setWordWrap(True)
+        v.addWidget(self.lbl_senas)
+        self.editor.textChanged.connect(self._actualizar_senas)
+        self._actualizar_senas()
         fila = QHBoxLayout()
-        fila.addWidget(_etiqueta("Ctrl+Enter para mostrar", "tenue"))
+        fila.addWidget(_etiqueta("Ctrl+Enter para mostrar", "atajos"))
         fila.addStretch()
         fila.addWidget(_boton("Cancelar", "secundario", self.reject))
         self.btn_mostrar = _boton("Mostrar en grande", "primario", self._mostrar)
@@ -1064,11 +1472,23 @@ class DialogoRespuesta(QDialog):
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._mostrar)
         self.editor.setFocus()
 
+    def _actualizar_senas(self) -> None:
+        if self._animaciones is None:
+            self.lbl_senas.setText("")
+            return
+        senas = self._animaciones.buscar(self.editor.toPlainText())
+        self.lbl_senas.setText("También se mostrará en señas: " + " · ".join(senas) if senas else
+                               "Las palabras con seña conocida (hola, gracias, por favor…) se mostrarán también en señas.")
+
     def _mostrar(self) -> None:
         texto = self.editor.toPlainText().strip()
         if texto:
             self.respuesta_lista.emit(texto)
             self.accept()
+
+
+def _html(texto: str) -> str:
+    return texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _mano_en_borde(c) -> bool:

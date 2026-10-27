@@ -13,7 +13,8 @@ from silva.clasificador import ClasificadorPreentrenado
 from silva.controlador import ControladorSILVA
 from silva.cuerpo import DetectorCuerpo
 from silva.detector_manos import DetectorManos
-from silva.interfaz import FONDO, SUAVE, VentanaPrincipal
+from silva.interfaz import GRAFITO, PAPEL, TINTA, VentanaPrincipal, cargar_fuentes
+from silva.letras_movimiento import ClasificadorMovimiento
 from silva.palabras import ClasificadorPalabras
 from silva.repositorio_historial import RepositorioHistorial
 
@@ -26,6 +27,39 @@ def _icono():
     return QIcon(str(config.RUTA_ICONO)) if config.RUTA_ICONO.exists() else None
 
 
+def _pantalla_de_carga():
+    """Ventana sin bordes con el logo mientras se cargan los modelos (unos segundos)."""
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+
+    from silva import __version__, config
+
+    ventana = QWidget()
+    ventana.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
+    ventana.setStyleSheet(f"background: {PAPEL}; color: {GRAFITO}; font-family: 'IBM Plex Sans'; font-size: 10pt;")
+    v = QVBoxLayout(ventana)
+    v.setContentsMargins(80, 40, 80, 34)
+    v.setSpacing(6)
+    fila = QHBoxLayout()
+    fila.addStretch()
+    if config.RUTA_MARCA.exists():
+        marca = QLabel()
+        marca.setPixmap(QPixmap(str(config.RUTA_MARCA)).scaledToHeight(64, Qt.SmoothTransformation))
+        fila.addWidget(marca)
+        fila.addSpacing(18)
+    nombre = QLabel("SILVA")
+    nombre.setStyleSheet(f"color: {TINTA}; font-size: 30pt; font-weight: 700; letter-spacing: 3px;")
+    fila.addWidget(nombre)
+    fila.addStretch()
+    v.addLayout(fila)
+    v.addSpacing(10)
+    for texto in (f"Traductor de Lengua de Señas Colombiana · v{__version__}", "Cargando modelos…"):
+        etiqueta = QLabel(texto)
+        etiqueta.setAlignment(Qt.AlignCenter)
+        v.addWidget(etiqueta)
+    return ventana
+
+
 def _cargar_palabras():
     """El modo Palabras es opcional: si falta su modelo, la app funciona solo con letras."""
     try:
@@ -34,6 +68,14 @@ def _cargar_palabras():
         return DetectorCuerpo(), clasificador, umbrales
     except FileNotFoundError:
         return None, None, (0.5, 0.12)
+
+
+def _cargar_movimiento():
+    """Las letras con movimiento son opcionales: sin su modelo, el Deletreo sigue con las estáticas."""
+    try:
+        return ClasificadorMovimiento()
+    except FileNotFoundError:
+        return None
 
 
 def verificar(destino: Path, con_camara: bool) -> bool:
@@ -62,6 +104,7 @@ def verificar(destino: Path, con_camara: bool) -> bool:
     cuadro = np.zeros((480, 640, 3), dtype=np.uint8)
     paso("Detector de manos (MediaPipe)", lambda: f"sin mano en cuadro vacío: {DetectorManos().detectar(cuadro, 0) is None}")
     paso("Clasificador de letras", lambda: f"{len(ClasificadorPreentrenado().letras)} letras")
+    paso("Clasificador de letras con movimiento", lambda: " ".join(ClasificadorMovimiento().letras))
     paso("Detector de cuerpo (MediaPipe Pose)", lambda: f"pose en cuadro vacío: {DetectorCuerpo().detectar(cuadro, 0).pose is not None}")
     paso("Clasificador de palabras", lambda: f"{len(ClasificadorPalabras().palabras)} expresiones")
     paso("Historial (SQLite)", lambda: f"{len(RepositorioHistorial().listar_sesiones())} sesiones guardadas")
@@ -94,12 +137,10 @@ def main() -> None:
     app.setApplicationName("SILVA")
     if config_icono := _icono():
         app.setWindowIcon(config_icono)
-    app.setFont(QFont("Segoe UI", 10))
+    cargar_fuentes()  # IBM Plex Sans (recursos/fuentes), la tipografía de la identidad v2
+    app.setFont(QFont("IBM Plex Sans", 10))
 
-    aviso = QLabel("SILVA\nCargando modelos…")
-    aviso.setAlignment(Qt.AlignCenter)
-    aviso.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
-    aviso.setStyleSheet(f"background: {FONDO}; color: {SUAVE}; font-size: 14pt; padding: 40px 70px;")
+    aviso = _pantalla_de_carga()
     aviso.show()
     app.processEvents()
 
@@ -116,6 +157,7 @@ def main() -> None:
             clasificador_palabras=clasificador_palabras,
             umbral_palabras=umbral_palabras,
             umbral_sugerencia=umbral_sugerencia,
+            clasificador_movimiento=_cargar_movimiento(),
         )
     except FileNotFoundError as error:
         aviso.close()

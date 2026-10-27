@@ -13,7 +13,13 @@ datos = [
     (str(RAIZ / "modelos" / "pose_landmarker_lite.task"), "modelos"),
     (str(RAIZ / "modelos" / "modelo_senas.pkl"), "modelos"),
     (str(RAIZ / "modelos" / "modelo_palabras.pkl"), "modelos"),
+    (str(RAIZ / "modelos" / "modelo_letras_movimiento.pkl"), "modelos"),
+    (str(RAIZ / "modelos" / "animaciones_senas.npz"), "modelos"),
+    (str(RAIZ / "recursos" / "silva_marca.png"), "recursos"),
+    (str(RAIZ / "recursos" / "palabras_es.txt"), "recursos"),
+    (str(RAIZ / "recursos" / "fuentes"), "recursos/fuentes"),
     (str(RAIZ / "recursos" / "silva.ico"), "recursos"),
+    (str(RAIZ / "recursos" / "silva_logo.png"), "recursos"),
 ]
 datos += collect_data_files("mediapipe", includes=["**/*.binarypb", "**/*.tflite", "**/*.txt"])
 
