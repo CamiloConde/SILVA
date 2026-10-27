@@ -112,6 +112,29 @@ def test_segmentador_mide_en_segundos_y_no_en_cuadros():
         assert terminadas[0].inicio == pytest.approx(0.5 - 2 / 30, abs=1 / fps)
 
 
+def test_sentado_la_sena_termina_al_volver_las_manos_a_la_mesa():
+    """Sentada, la persona descansa las manos a ~0,5 anchos de hombro bajo los hombros (sobre la mesa). Sin
+    reposo aprendido eso cuenta como «manos levantadas» y la seña se corta a los 4 s; con él, termina enseguida."""
+    from silva.palabras import SEGUNDOS_MAX
+    fps = 30
+
+    def sentado(altura: float) -> np.ndarray:
+        f = cuadro(altura)
+        f[11] = altura  # la muñeca de la pose va con la mano (la otra mano queda abajo)
+        return f
+
+    cuadros = [sentado(0.5)] * 45 + [sentado(-0.3 + 0.02 * (k % 6)) for k in range(24)] + [sentado(0.5)] * 60
+    for aprender, termina_pronto in ((False, False), (True, True)):
+        seg = SegmentadorSenas(aprender_reposo=aprender)
+        cortes = [(i / fps, len(e.terminada) / fps) for i, f in enumerate(cuadros)
+                  if (e := seg.agregar(f, i / fps)).terminada is not None]
+        if termina_pronto:
+            assert len(cortes) == 1 and cortes[0][1] < 1.5, cortes
+            assert seg.reposo[0] == pytest.approx(0.5, abs=0.01)
+        else:
+            assert all(largo >= SEGUNDOS_MAX - 0.1 for _, largo in cortes), cortes
+
+
 def test_segmentador_ignora_cuadros_sin_pose():
     seg = SegmentadorSenas()
     assert seg.agregar(None).terminada is None

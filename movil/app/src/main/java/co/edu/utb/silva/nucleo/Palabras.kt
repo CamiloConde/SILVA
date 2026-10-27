@@ -36,8 +36,18 @@ private const val HOLGURA = 1e-6
 /**
  * Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo, medida en segundos
  * (silva.palabras.SegmentadorSenas): funciona igual a 30 que a 15 cuadros/s. Sin reloj supone 30 cuadros/s.
+ * Con `aprenderReposo` aprende a qué altura descansan las manos de la persona (sentada, sobre la mesa).
  */
-class SegmentadorSenas {
+class SegmentadorSenas(private val aprenderReposo: Boolean = true) {
+    private val reposo = arrayOfNulls<Double>(2)  // altura de reposo aprendida de cada muñeca (izq., der.)
+    private val quietaDesde = arrayOfNulls<Double>(2)
+    private var posePrevia: DoubleArray? = null  // x, y de cada muñeca de la pose
+    private var tPosePrevia: Double? = null
+    // un tramo con las manos levantadas pero sin ningún movimiento no es una seña (al encender la cámara con
+    // las manos sobre la mesa, antes de aprender ese reposo): con reposo aprendido se descarta
+    private var seMovio = false
+    private var conMovimiento = false
+
     private class Cuadro(val t: Double, val f: FloatArray)
 
     private val previo = ArrayDeque<Cuadro>()
@@ -56,17 +66,59 @@ class SegmentadorSenas {
         activos = 0.0
         munecasPrevias = emptyList()
         tPrevio = null
+        reposo.fill(null)
+        quietaDesde.fill(null)
+        posePrevia = null
+        tPosePrevia = null
+        seMovio = false
+        conMovimiento = false
+    }
+
+    private fun aprender(f: FloatArray, t: Double) {
+        val pose = DoubleArray(4) { f[I_MUNECAS_POSE[it / 2] + it % 2].toDouble() }
+        val antes = posePrevia
+        val tAntes = tPosePrevia
+        if (antes != null && tAntes != null) {
+            val dt = maxOf(t - tAntes, 1e-3)
+            for (k in 0..1) {
+                val desde = quietaDesde[k]
+                val y = pose[2 * k + 1]
+                val velocidad = hypot(pose[2 * k] - antes[2 * k], y - antes[2 * k + 1]) / dt
+                if (velocidad > Config.VELOCIDAD_ACTIVA) seMovio = true
+                if (velocidad >= Config.VELOCIDAD_QUIETA) {
+                    quietaDesde[k] = null
+                } else if (desde == null) {
+                    quietaDesde[k] = tAntes
+                } else if (t - desde >= Config.SEGUNDOS_QUIETA - HOLGURA && y >= Config.REPOSO_MAS_ALTO) {
+                    reposo[k] = reposo[k]?.let { 0.9 * it + 0.1 * y } ?: y
+                }
+            }
+        }
+        posePrevia = pose
+        tPosePrevia = t
+    }
+
+    private fun levantadaSegunReposo(f: FloatArray, m: List<FloatArray>): Boolean {
+        if (!aprenderReposo) return levantada(f, m)
+        for (k in 0..1) {
+            val umbral = reposo[k]?.let { minOf(Config.ALTURA_ACTIVA, it - Config.MARGEN_REPOSO) } ?: Config.ALTURA_ACTIVA
+            if (f[I_MUNECAS_POSE[k] + 1] < umbral || (f[I_MUNECA[k] + 42] > 0f && f[I_MUNECA[k] + 1] < umbral)) return true
+        }
+        return false
     }
 
     private fun esActivo(f: FloatArray, t: Double): Boolean {
         val m = munecas(f)
-        val arriba = levantada(f, m)
+        seMovio = false
+        if (aprenderReposo) aprender(f, t)
+        val arriba = levantadaSegunReposo(f, m)
         val antes = tPrevio
         val movida = munecasPrevias.isNotEmpty() && m.isNotEmpty() && antes != null && run {
             val dt = maxOf(t - antes, 1e-3)
             m.any { a -> munecasPrevias.minOf { distancia(a, it) } / dt > Config.VELOCIDAD_ACTIVA }
         }
         munecasPrevias = m
+        seMovio = seMovio || movida
         return arriba || movida
     }
 
@@ -88,6 +140,7 @@ class SegmentadorSenas {
                 actual.add(Cuadro(t, f))
                 activos = paso
                 tActivo = t
+                conMovimiento = seMovio
             } else {  // se guarda el reposo justo anterior, para empezar la seña un poco antes
                 previo.addLast(Cuadro(t, f))
                 while (previo.first().t < t - Config.SEGUNDOS_MARGEN - HOLGURA) previo.removeFirst()
@@ -98,11 +151,12 @@ class SegmentadorSenas {
                 activos += paso
                 tActivo = t
             }
+            conMovimiento = conMovimiento || seMovio
             val quieto = t - tActivo >= Config.SEGUNDOS_FIN - HOLGURA
             if (quieto || duracion(t) >= Config.SEGUNDOS_MAX - HOLGURA) {
                 // sin el reposo del final, salvo un margen
                 val cuadros = if (quieto) actual.filter { it.t <= tActivo + Config.SEGUNDOS_MARGEN + HOLGURA } else actual
-                if (activos >= Config.SEGUNDOS_MIN_ACTIVOS - HOLGURA) {
+                if (activos >= Config.SEGUNDOS_MIN_ACTIVOS - HOLGURA && (conMovimiento || !aprenderReposo)) {
                     terminada = cuadros.map { it.f }
                     inicio = cuadros[0].t
                 }

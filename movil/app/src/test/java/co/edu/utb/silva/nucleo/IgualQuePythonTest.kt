@@ -227,3 +227,28 @@ class MotorTest {
         assertTrue(trazo!!.puntos.size >= 12)
     }
 }
+
+/** Reposo aprendido (silva.palabras): sentada, la persona descansa las manos sobre la mesa. */
+class ReposoTest {
+    /** Cuadro con la mano izquierda (y su muñeca de la pose) a cierta altura; la derecha queda abajo. */
+    private fun sentado(altura: Float) = FloatArray(N_CUADRO).also { f ->
+        f[2] = 0.5f; f[4] = -0.5f  // hombros
+        f[10] = 0.6f; f[11] = altura; f[12] = -0.6f; f[13] = 1.5f  // muñecas de la pose
+        for (k in 0 until 21) { f[N_POSE + 2 * k] = 0.6f; f[N_POSE + 2 * k + 1] = altura }
+        f[N_POSE + 42] = 1f
+    }
+
+    private fun cortes(aprender: Boolean): List<Double> {
+        val cuadros = List(45) { sentado(0.5f) } + List(24) { sentado(-0.3f + 0.02f * (it % 6)) } + List(60) { sentado(0.5f) }
+        val seg = SegmentadorSenas(aprender)
+        return cuadros.mapIndexedNotNull { i, f -> seg.agregar(f, i / 30.0).terminada?.let { it.size / 30.0 } }
+    }
+
+    @Test
+    fun conReposoAprendidoLaSenaTerminaAlVolverALaMesa() {
+        val con = cortes(true)
+        assertEquals(1, con.size)  // la seña, y no un tramo quieto al empezar
+        assertTrue(con[0] < 1.5)
+        assertTrue(cortes(false).all { it >= Config.SEGUNDOS_MAX - 0.1 })  // sin él se cortaba a los 4 s
+    }
+}

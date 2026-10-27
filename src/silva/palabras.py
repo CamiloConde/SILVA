@@ -46,6 +46,18 @@ VELOCIDAD_ACTIVA = MOVIMIENTO_ACTIVO * FPS_REFERENCIA  # anchos de hombro por se
 _PASO_MAXIMO = 0.2  # un hueco largo entre cuadros (p. ej. sin pose) cuenta a lo sumo esto como actividad
 _HOLGURA = 1e-6
 
+# Reposo de cada persona. ALTURA_ACTIVA viene de personas de pie con los brazos caídos; sentada frente a un PC o
+# un teléfono, la persona descansa las manos sobre la mesa o el regazo, a 0,3-0,7 anchos de hombro bajo los
+# hombros: para esa regla seguía con las manos «levantadas», la seña nunca terminaba y se cortaba a los 4 s.
+# Por eso el segmentador en vivo aprende dónde descansa cada mano: si la muñeca queda quieta un segundo, esa
+# altura es su reposo, y la mano cuenta como levantada solo si sube MARGEN_REPOSO por encima de él. Un reposo
+# nunca se aprende por encima de REPOSO_MAS_ALTO (más arriba es una pausa dentro de la seña, no un reposo), y
+# nunca hace más estricta la regla general: para alguien de pie todo sigue igual.
+SEGUNDOS_QUIETA = 1.0  # tiempo con la muñeca quieta para tomar su altura como reposo
+VELOCIDAD_QUIETA = 0.6  # anchos de hombro por segundo: más despacio, la muñeca está quieta
+REPOSO_MAS_ALTO = 0.3  # anchos de hombro bajo la línea de los hombros (a media altura del pecho)
+MARGEN_REPOSO = 0.25  # cuánto debe subir la mano sobre su reposo para contar como levantada
+
 _I_MUNECA = (N_POSE, N_POSE + N_MANO)  # inicio de cada mano en el vector; la muñeca es el punto 0
 
 
@@ -203,9 +215,21 @@ class EstadoSegmentador:
 
 
 class SegmentadorSenas:
-    """Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo, medida en segundos."""
+    """Máquina de estados reposo → seña → reposo sobre el flujo de cuadros en vivo, medida en segundos.
 
-    def __init__(self) -> None:
+    Con `aprender_reposo` (lo normal en vivo) aprende a qué altura descansan las manos de la persona.
+    """
+
+    def __init__(self, aprender_reposo: bool = True) -> None:
+        self.aprender_reposo = aprender_reposo
+        self._reposo: list[float | None] = [None, None]  # altura de reposo aprendida de cada muñeca (izq., der.)
+        self._quieta_desde: list[float | None] = [None, None]
+        self._pose_previa: np.ndarray | None = None
+        self._t_pose_previa: float | None = None
+        # Un tramo con las manos levantadas pero sin ningún movimiento no es una seña: pasa al encender la cámara
+        # con las manos sobre la mesa, antes de aprender ese reposo. Con reposo aprendido se descarta.
+        self._se_movio = False  # en el cuadro actual
+        self._con_movimiento = False  # en el tramo en curso
         self._previo: deque[tuple[float, np.ndarray]] = deque()
         self._actual: list[tuple[float, np.ndarray]] = []
         self._activos = 0.0  # segundos con alguna mano activa
@@ -224,16 +248,59 @@ class SegmentadorSenas:
         self._activos = 0.0
         self._munecas_previas = []
         self._t_previo = None
+        self._reposo = [None, None]
+        self._quieta_desde = [None, None]
+        self._pose_previa = None
+        self._t_pose_previa = None
+        self._se_movio = False
+        self._con_movimiento = False
+
+    @property
+    def reposo(self) -> tuple[float | None, float | None]:
+        """Altura de reposo aprendida de cada muñeca (anchos de hombro bajo los hombros), o None."""
+        return self._reposo[0], self._reposo[1]
+
+    def _aprender(self, f: np.ndarray, t: float) -> None:
+        pose = np.array([f[i:i + 2] for i in _I_MUNECAS_POSE], np.float64)
+        if self._pose_previa is not None and self._t_pose_previa is not None:
+            dt = max(t - self._t_pose_previa, 1e-3)
+            for k in range(2):
+                velocidad = np.linalg.norm(pose[k] - self._pose_previa[k]) / dt
+                if velocidad > VELOCIDAD_ACTIVA:
+                    self._se_movio = True
+                if velocidad >= VELOCIDAD_QUIETA:
+                    self._quieta_desde[k] = None
+                elif self._quieta_desde[k] is None:
+                    self._quieta_desde[k] = self._t_pose_previa
+                elif t - self._quieta_desde[k] >= SEGUNDOS_QUIETA - _HOLGURA and pose[k][1] >= REPOSO_MAS_ALTO:
+                    y = float(pose[k][1])
+                    self._reposo[k] = y if self._reposo[k] is None else 0.9 * self._reposo[k] + 0.1 * y
+        self._pose_previa = pose
+        self._t_pose_previa = t
+
+    def _levantada(self, f: np.ndarray, munecas: list[np.ndarray]) -> bool:
+        if not self.aprender_reposo:
+            return _levantada(f, munecas)
+        for k, (i_mano, i_pose) in enumerate(zip(_I_MUNECA, _I_MUNECAS_POSE)):
+            reposo = self._reposo[k]
+            umbral = ALTURA_ACTIVA if reposo is None else min(ALTURA_ACTIVA, reposo - MARGEN_REPOSO)
+            if f[i_pose + 1] < umbral or (f[i_mano + 42] > 0 and f[i_mano + 1] < umbral):
+                return True
+        return False
 
     def _es_activo(self, f: np.ndarray, t: float) -> bool:
         munecas = _munecas(f)
-        levantada = _levantada(f, munecas)
+        self._se_movio = False
+        if self.aprender_reposo:
+            self._aprender(f, t)
+        levantada = self._levantada(f, munecas)
         movida = False
         if self._munecas_previas and munecas and self._t_previo is not None:
             dt = max(t - self._t_previo, 1e-3)
             movida = any(min(np.linalg.norm(m - p) for p in self._munecas_previas) / dt > VELOCIDAD_ACTIVA
                          for m in munecas)
         self._munecas_previas = munecas
+        self._se_movio = self._se_movio or movida
         return levantada or movida
 
     def _duracion(self, t: float) -> float:
@@ -256,6 +323,7 @@ class SegmentadorSenas:
                 self._actual.append((t, f))
                 self._activos = paso
                 self._t_activo = t
+                self._con_movimiento = self._se_movio
             else:  # se guarda el reposo justo anterior, para empezar la seña un poco antes
                 self._previo.append((t, f))
                 while self._previo[0][0] < t - SEGUNDOS_MARGEN - _HOLGURA:
@@ -265,12 +333,13 @@ class SegmentadorSenas:
             if activo:
                 self._activos += paso
                 self._t_activo = t
+            self._con_movimiento = self._con_movimiento or self._se_movio
             quieto = t - self._t_activo >= SEGUNDOS_FIN - _HOLGURA
             if quieto or self._duracion(t) >= SEGUNDOS_MAX - _HOLGURA:
                 cuadros = self._actual
                 if quieto:  # sin el reposo del final, salvo un margen
                     cuadros = [(tc, fc) for tc, fc in cuadros if tc <= self._t_activo + SEGUNDOS_MARGEN + _HOLGURA]
-                if self._activos >= SEGUNDOS_MIN_ACTIVOS - _HOLGURA:
+                if self._activos >= SEGUNDOS_MIN_ACTIVOS - _HOLGURA and (self._con_movimiento or not self.aprender_reposo):
                     terminada = np.array([fc for _, fc in cuadros])
                     inicio = cuadros[0][0]
                 self._actual = []

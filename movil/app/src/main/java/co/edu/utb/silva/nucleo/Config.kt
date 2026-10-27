@@ -43,6 +43,12 @@ object Config {
     const val VELOCIDAD_ACTIVA = MOVIMIENTO_ACTIVO * FPS_REFERENCIA  // anchos de hombro por segundo
     const val SEGUNDOS_REPETICION = 0.4  // pausa entre la palabra escrita y la siguiente seña (silva.controlador)
 
+    // Reposo de cada persona (silva.palabras): sentada, las manos descansan más arriba que de pie
+    const val SEGUNDOS_QUIETA = 1.0  // tiempo con la muñeca quieta para tomar su altura como reposo
+    const val VELOCIDAD_QUIETA = 0.6  // anchos de hombro por segundo
+    const val REPOSO_MAS_ALTO = 0.3  // un reposo nunca se aprende más arriba que esto
+    const val MARGEN_REPOSO = 0.25  // cuánto debe subir la mano sobre su reposo para contar como levantada
+
     // Recuperación de la mano perdida
     const val RECORTE_RECUPERACION = 1.8
     const val TAM_RECORTE = 256
