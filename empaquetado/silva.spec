@@ -15,6 +15,7 @@ datos = [
     (str(RAIZ / "modelos" / "modelo_palabras.pkl"), "modelos"),
     (str(RAIZ / "modelos" / "modelo_letras_movimiento.pkl"), "modelos"),
     (str(RAIZ / "modelos" / "animaciones_senas.npz"), "modelos"),
+    (str(RAIZ / "modelos" / "animaciones_letras.npz"), "modelos"),
     (str(RAIZ / "recursos" / "silva_marca.png"), "recursos"),
     (str(RAIZ / "recursos" / "palabras_es.txt"), "recursos"),
     (str(RAIZ / "recursos" / "fuentes"), "recursos/fuentes"),

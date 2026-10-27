@@ -136,6 +136,10 @@ def main() -> None:
     nombres_anim = [str(n) for n in animaciones["nombres"]]
     cuadros_anim = animaciones["animaciones"].astype(np.float32)
     (ASSETS / "modelos" / "animaciones.bin").write_bytes(struct.pack("<3i", *cuadros_anim.shape) + cuadros_anim.tobytes())
+    guias = np.load(config.RUTA_GUIAS_LETRAS)
+    cuadros_guias = guias["cuadros"].astype(np.float32)  # letras × 6 cuadros × 21 puntos × (x, y)
+    (ASSETS / "modelos" / "animaciones_letras.bin").write_bytes(
+        struct.pack("<3i", *cuadros_guias.shape[:3]) + cuadros_guias.tobytes())
 
     metadatos_palabras = paquete_palabras.get("metadatos", {})
     indice = {
@@ -148,6 +152,7 @@ def main() -> None:
             "umbral_sugerencia": float(metadatos_palabras.get("umbral_sugerencia", 0.12)),
         },
         "animaciones": nombres_anim,
+        "guias_letras": {"letras": [str(l) for l in guias["letras"]], "trazo": [bool(t) for t in guias["trazo"]]},
     }
     (ASSETS / "modelos" / "modelos.json").write_text(json.dumps(indice, ensure_ascii=False, indent=1), encoding="utf-8")
 

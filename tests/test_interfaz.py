@@ -266,7 +266,9 @@ def test_quisiste_decir_completa_la_palabra_deletreada(app):
 
 def test_entrenar_graba_una_letra_sin_escribir_ni_guardar_sesion(app, tmp_path):
     """Entrenar: «Grabar» enciende la cámara, toma 30 cuadros de la letra quieta y se detiene sola."""
+    from PySide6.QtCore import QSettings
     from silva.muestras_propias import GrabadorMuestras
+    anterior = QSettings("SILVA", "SILVA").value("persona")  # la prueba no debe cambiar quién graba en este equipo
     ventana, ctrl, errores = crear(app)
     ventana.cambiar_modo(MODO_LETRAS)
     ventana.ver_entrenar()
@@ -285,3 +287,7 @@ def test_entrenar_graba_una_letra_sin_escribir_ni_guardar_sesion(app, tmp_path):
     assert not ctrl.entrenando
     assert errores == []
     ventana.close()
+    if anterior is None:
+        QSettings("SILVA", "SILVA").remove("persona")
+    else:
+        QSettings("SILVA", "SILVA").setValue("persona", anterior)

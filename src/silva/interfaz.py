@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from silva import __version__, config
-from silva.animacion import AnimacionesSenas, AnimacionSena
+from silva.animacion import AnimacionesSenas, AnimacionSena, GuiaLetra, GuiasLetras
 from silva.captura_video import CamaraNoDisponibleError
 from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, PalabraPendiente, ResultadoCuadro
 from silva.cuerpo import dibujar_cuerpo, evaluar_encuadre
@@ -89,6 +89,7 @@ QPushButton#cabecera_enlace:hover {{ color: {AZUL}; }}
 #letra[dudosa="true"] {{ color: {APAGADO}; }}
 #porcentaje {{ font-size: 20pt; font-weight: 500; }}
 #letra_abc {{ font-size: 11pt; font-weight: 500; color: {TINTA}; padding: 2px; }}
+#letra_abc:hover {{ color: {AZUL}; }}
 #letra_abc[apagada="true"] {{ color: {APAGADO}; }}
 #letra_abc[activo="true"] {{ color: {AZUL}; text-decoration: underline; }}
 #palabra_voc {{ font-size: 10pt; color: {TINTA}; padding: 2px 4px; }}
@@ -637,6 +638,10 @@ class VentanaPrincipal(QWidget):
             self._animaciones: AnimacionesSenas | None = AnimacionesSenas()
         except FileNotFoundError:
             self._animaciones = None
+        try:
+            self._guias: GuiasLetras | None = GuiasLetras()
+        except FileNotFoundError:
+            self._guias = None
         self.mostrar_error = self._mostrar_error  # reemplazable en pruebas
 
         self.setObjectName("raiz")
@@ -790,11 +795,12 @@ class VentanaPrincipal(QWidget):
         rejilla.setVerticalSpacing(8)
         con_trazo = set(self.ctrl.clasificador_movimiento.letras) if self.ctrl.clasificador_movimiento else set()
         for i, letra in enumerate(config.LETRAS):
-            etiqueta = _etiqueta(letra, "letra_abc")
+            etiqueta = EtiquetaClic(letra, "letra_abc")
+            etiqueta.clic.connect(lambda l=letra: self.ver_letra(l))
+            etiqueta.setCursor(Qt.PointingHandCursor)
             etiqueta.setAlignment(Qt.AlignCenter)
             etiqueta.setProperty("apagada", letra not in letras)
-            if letra in con_trazo:
-                etiqueta.setToolTip(f"La {letra} se hace con movimiento")
+            etiqueta.setToolTip(f"Ver cómo se hace la {letra}" + (" (se hace con movimiento)" if letra in con_trazo else ""))
             rejilla.addWidget(etiqueta, i // 9, i % 9)
             self._chips[letra] = etiqueta
         v.addLayout(rejilla)
@@ -1410,6 +1416,26 @@ class VentanaPrincipal(QWidget):
         self._dialogo_sena = dialogo
         dialogo.show()
 
+    def ver_letra(self, letra: str) -> None:
+        """Guía del Deletreo: cómo se hace una letra (la mano en grande y, si se traza, su recorrido)."""
+        if self._guias is None or letra not in self._guias.letras:
+            return
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle(f"Letra {letra}")
+        dialogo.setStyleSheet(HOJA_ESTILO)
+        dialogo.resize(340, 430)
+        v = QVBoxLayout(dialogo)
+        v.setContentsMargins(16, 16, 16, 16)
+        guia = GuiaLetra(self._guias, dialogo)
+        guia.mostrar(letra)
+        v.addWidget(guia)
+        nota = _etiqueta("La mano derecha vista de frente, como la verías frente a ti. Imagen de LSC70 "
+                         "(Muñoz Galindez et al., 2024).", "tenue")
+        nota.setWordWrap(True)
+        v.addWidget(nota)
+        self._dialogo_sena = dialogo
+        dialogo.show()
+
     def responder(self) -> None:
         """RF-09: la persona oyente escribe y la respuesta se muestra en grande sobre el video."""
         dialogo = DialogoRespuesta(self, self._animaciones)
@@ -1455,6 +1481,21 @@ class DialogoAjustes(QDialog):
         self.combo_tamano.currentIndexChanged.connect(lambda i: ventana.poner_texto_grande(i == 1))
         v.addWidget(self.combo_tamano)
         v.addStretch()
+
+
+class EtiquetaClic(QLabel):
+    """Etiqueta que se puede tocar (las letras del abecedario abren su guía)."""
+
+    clic = Signal()
+
+    def __init__(self, texto: str, nombre: str) -> None:
+        super().__init__(texto)
+        self.setObjectName(nombre)
+
+    def mousePressEvent(self, evento) -> None:
+        if evento.button() == Qt.LeftButton:
+            self.clic.emit()
+        super().mousePressEvent(evento)
 
 
 class TrabajadorEntrenamiento(QThread):
@@ -1510,7 +1551,7 @@ class VentanaEntrenar(QDialog):
         self.ctrl = ventana.ctrl
         self.setWindowTitle("Entrenar")
         self.setStyleSheet(HOJA_ESTILO)
-        self.resize(480, 760)
+        self.resize(620, 780)
         self.grabador = GrabadorMuestras()
         self.grabando = False
         self._clave: str | None = None
@@ -1535,7 +1576,18 @@ class VentanaEntrenar(QDialog):
         v.addWidget(self.lbl_modo)
         self.lista = QListWidget()
         self.lista.currentItemChanged.connect(self._elegir)
-        v.addWidget(self.lista, 1)
+        # al lado de la lista, cómo se hace lo que se va a grabar: la seña animada o la guía de la letra
+        self.guias = QStackedWidget()
+        self.guias.setFixedWidth(240)
+        self.guia_sena = AnimacionSena(ventana._animaciones) if ventana._animaciones else QWidget()
+        self.guia_letra = GuiaLetra(ventana._guias) if ventana._guias else QWidget()
+        self.guias.addWidget(self.guia_sena)
+        self.guias.addWidget(self.guia_letra)
+        self.guias.hide()
+        fila_lista = QHBoxLayout()
+        fila_lista.addWidget(self.lista, 1)
+        fila_lista.addWidget(self.guias)
+        v.addLayout(fila_lista, 1)
         self.aviso = _etiqueta("", "tenue")
         self.aviso.setWordWrap(True)
         self.aviso.setMinimumHeight(44)
@@ -1590,7 +1642,7 @@ class VentanaEntrenar(QDialog):
 
     def _texto_item(self, clave: str) -> str:
         n = self.grabador.cuantas(self._tipo(clave), clave)
-        trazo = "  ↝ (se traza)" if self._tipo(clave) == "trazo" else ""
+        trazo = "  · se traza" if self._tipo(clave) == "trazo" else ""
         return f"{self._nombre(clave)}{trazo}" + (f"   ·   {n} muestras" if n else "")
 
     def refrescar(self) -> None:
@@ -1612,12 +1664,14 @@ class VentanaEntrenar(QDialog):
             self.lista.addItem(item)
         self.lista.blockSignals(False)
         self._clave = None
+        self._mostrar_guia()
         self.aviso.setText("Elige una palabra para grabarla." if palabras else "Elige una letra para grabarla.")
         self._actualizar_total()
 
     def _elegir(self, item: QListWidgetItem | None, _anterior=None) -> None:
         self.detener_grabacion()
         self._clave = item.data(Qt.UserRole) if item else None
+        self._mostrar_guia()
         if self._clave is None:
             return
         nombre = self._nombre(self._clave)
@@ -1626,6 +1680,23 @@ class VentanaEntrenar(QDialog):
             "trazo": f"Toca «Grabar» y traza la {nombre} varias veces; quédate quieto al terminar cada una.",
             "letra": f"Toca «Grabar» y sostén la {nombre} quieta hasta que se llene la barra.",
         }[self._tipo(self._clave)])
+
+    def _mostrar_guia(self) -> None:
+        clave = self._clave
+        if clave is None:
+            self.guias.hide()
+            return
+        if self._palabras() and isinstance(self.guia_sena, AnimacionSena) \
+                and self._nombre(clave) in self.ventana._animaciones.nombres:
+            self.guia_sena.mostrar([self._nombre(clave)])
+            self.guias.setCurrentWidget(self.guia_sena)
+            self.guias.show()
+        elif not self._palabras() and isinstance(self.guia_letra, GuiaLetra) and clave in self.ventana._guias.letras:
+            self.guia_letra.mostrar(clave)
+            self.guias.setCurrentWidget(self.guia_letra)
+            self.guias.show()
+        else:
+            self.guias.hide()
 
     def _actualizar_total(self) -> None:
         self.lbl_total.setText(f"{self.grabador.total} muestras en {self.grabador.carpeta}")
