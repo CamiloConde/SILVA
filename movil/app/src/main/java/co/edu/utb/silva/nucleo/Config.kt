@@ -1,0 +1,50 @@
+package co.edu.utb.silva.nucleo
+
+/**
+ * Constantes de silva.config y silva.palabras. Las pruebas comprueban que coincidan con las de la
+ * app de PC (casos.json, generado por scripts/exportar_movil.py).
+ */
+object Config {
+    // Deletreo
+    const val UMBRAL_CONFIANZA = 0.60  // con 0,80 muchas letras de manos nuevas no llegaban a escribirse
+    const val CUADROS_ESTABLES = 5
+    const val CONFIANZA_DETECCION = 0.6f
+
+    // Letras con movimiento
+    const val MOVIMIENTO_INICIO = 0.08
+    const val MOVIMIENTO_FIN = 0.04
+    const val CUADROS_QUIETO = 4
+    const val MIN_CUADROS_MOVIMIENTO = 6
+    const val MAX_CUADROS_MOVIMIENTO = 75
+    const val UMBRAL_MOVIMIENTO = 0.4
+    const val RECORRIDO_MINIMO = 0.4
+    const val SEGUNDOS_INICIO_TRAZO = 0.6
+
+    // Palabras
+    const val LONGITUD_FIJA = 20
+    const val MIN_ACTIVOS = 8
+    const val MAX_CUADROS = 120
+    const val CUADROS_FIN = 10
+    const val MARGEN = 2
+    const val ALTURA_ACTIVA = 0.8
+    const val MOVIMIENTO_ACTIVO = 0.12
+    const val CONFIANZA_MANOS_PALABRAS = 0.4f
+    const val SEGUNDOS_CORRECCION = 3.0
+    const val SEGUNDOS_SUGERENCIA = 6.0
+    const val CUADROS_REPETICION = 20
+
+    // Recuperación de la mano perdida
+    const val RECORTE_RECUPERACION = 1.8
+    const val TAM_RECORTE = 256
+    const val CONFIANZA_RECUPERACION = 0.3f
+
+    // Imagen
+    const val BRILLO_MINIMO = 55
+    val ENCUADRE_HOMBROS = doubleArrayOf(0.15, 0.30)
+    // Teléfono vertical (solo la app Android): ancho de hombros como fracción del ancho de la imagen. Las
+    // señas ocupan unos 2,5-3 anchos de hombro a lo ancho, así que con hombros de ~0,30 los brazos caben.
+    val ENCUADRE_HOMBROS_VERTICAL = doubleArrayOf(0.22, 0.40)
+    val ENCUADRE_CENTRO_X = doubleArrayOf(0.38, 0.62)
+    const val ENCUADRE_NARIZ_Y_MIN = 0.12
+    const val ENCUADRE_HOMBROS_Y_MAX = 0.70
+}
