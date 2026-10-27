@@ -2,7 +2,7 @@
 
 ## Pruebas automáticas
 
-Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **88 de 88 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
+Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **90 de 90 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
 
 Las tablas registran cada prueba en la versión en que se agregó. En la versión 1.3 el umbral de letras bajó de 0,80 a 0,60 (PR-02 ahora usa 0,59) y el modelo de letras quietas pasó de 17 a 20 letras (PR-08).
 
@@ -166,4 +166,15 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-79 | Despliegue (`SILVA.exe --entrenar`, carpeta de usuario temporal) | Reentrenar dentro del ejecutable con esas muestras | Modelo nuevo y paquete para el teléfono | 1 min 14 s; palabras escritas bien con sus tomas no vistas: antes 0 %, después 36 %; el ejecutable abre con el modelo nuevo. La prueba encontró una carpeta que no se creaba (corregido) | Aprobada |
 | PR-80 | Despliegue | `SILVA.exe --verificar` de la v1.4.0 | Modelos y datos para entrenar | Todo correcto, con los 5 datasets | Aprobada |
 | PR-81 | Funcional (teléfono) | Sección Entrenar en el Galaxy A35 | Se ve completa | Correcto; grabar y exportar desde el teléfono queda por probar con personas | Parcial |
+
+## Versión 1.4.1: señas animadas completas y guía del Deletreo (27/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-82 | Datos (`generar_animaciones.py`) | Manos de las 33 señas animadas | Ninguna mano desaparece | Antes: las 33 perdían alguna mano (hasta el 100 % en señas de una mano) y «Bienvenido» tenía una mano detectada a 5 anchos de hombro. Ahora: 0 de 33 (manos lejanas descartadas, huecos completados, cuadros sin pose quitados) | Aprobada |
+| PR-83 | Unitaria (`test_animacion.py`) | Encuadre de cada seña | La figura cabe entera en su recuadro | Correcto en las 33 | Aprobada |
+| PR-84 | Unitaria (`test_animacion.py`) | Guías de las letras | Una por letra; trazo solo en G H J Ñ Q S Z; se dibujan | Correcto (27) | Aprobada |
+| PR-85 | Datos | Elección de la guía de cada letra en LSC70 | Mano visible en las 6 imágenes, clara para los modelos, vista de frente y sin saltos | 27 guías; se descartaron grabaciones con saltos de la muñeca de hasta 7 palmas (H, S) | Aprobada |
+| PR-86 | Funcional (Galaxy A35) | Abecedario → J; Vocabulario → Bienvenido | La guía y la figura se ven completas | Correcto | Aprobada |
+| PR-87 | Usabilidad | Que una persona que sabe LSC revise las 27 guías | Cada guía muestra la letra correcta | | Pendiente |
 

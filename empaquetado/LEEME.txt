@@ -20,6 +20,7 @@ MODOS
   completar la palabra.
 - Responder (Ctrl+R): la persona oyente escribe su respuesta y se muestra en grande, con la seña
   animada de las palabras del vocabulario.
+- Abecedario: toque una letra para ver cómo se hace (la mano y, si se traza, su recorrido).
 - Leer en voz alta y Copiar: leen o copian el texto traducido.
 - Entrenar: grabar sus propias señas (solo puntos, nunca la imagen) y reentrenar los modelos con ellas, para
   que reconozca mejor a quienes van a usar SILVA. Las muestras y los modelos entrenados quedan en

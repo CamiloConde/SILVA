@@ -1,6 +1,6 @@
 # SILVA
 
-**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.4.0
+**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.4.1
 
 SILVA traduce a texto, en tiempo real, señas de la Lengua de Señas Colombiana (LSC) captadas con una cámara, y permite que la persona oyente responda por escrito o por voz, con las señas animadas. Funciona en Windows y en teléfonos Android. Todo se procesa en el equipo: no necesita internet ni envía video a ningún servidor.
 
@@ -12,14 +12,14 @@ Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bol�
 
 En [Releases](https://github.com/CamiloConde/SILVA/releases) están los dos archivos de la última versión.
 
-**Windows** · `SILVA-v1.4.0-windows.zip` (unos 372 MB)
+**Windows** · `SILVA-v1.4.1-windows.zip` (unos 372 MB)
 1. Descomprímalo completo y abra `SILVA\SILVA.exe`.
    - Si Windows muestra «Windows protegió su PC», elija *Más información → Ejecutar de todas formas*. Aparece porque el ejecutable no está firmado digitalmente.
 2. Presione **Iniciar** (o Enter).
 
 Requisitos: Windows 10/11 de 64 bits, cámara web, 8 GB de RAM recomendados. El historial se guarda en `%LOCALAPPDATA%\SILVA\historial.db`. Para comprobar una instalación: `SILVA.exe --verificar --camara` crea un informe en `%LOCALAPPDATA%\SILVA\verificacion.txt`.
 
-**Android** · `SILVA-v1.4.0-android.apk` (unos 88 MB)
+**Android** · `SILVA-v1.4.1-android.apk` (unos 88 MB)
 1. Copie el `.apk` al teléfono (por cable a la carpeta *Download*, o por Google Drive) y ábralo desde *Archivos*.
 2. Si Android lo pide, permita instalar apps de esa fuente. Si Play Protect avisa que la app no es conocida, toque *Más detalles → Instalar de todas formas*. El aviso sale porque la app no viene de la Play Store.
 3. Abra SILVA y toque **Iniciar**. Pide la cámara; el micrófono solo si usa **Hablar**.
@@ -39,7 +39,8 @@ Además:
 - **«¿Quisiste decir?»:** si la seña es dudosa, ofrece 3 opciones y no escribe nada salvo que alguien elija. Al deletrear, sugiere cómo completar la palabra (por ejemplo «HOLA MUN» → MUNDO) con las 20 000 palabras más frecuentes del español.
 - **Seguimiento de la mano:** si MediaPipe pierde una mano a mitad de la seña, la vuelve a buscar en un recorte ampliado alrededor de la muñeca del esqueleto.
 - **Avisos:** cuando no ve la mano o a la persona, cuando hay que acercarse o alejarse y cuando hay **poca luz** (los movimientos salen borrosos y se pierde la mano).
-- **Señas animadas:** una figura de persona hace las 33 señas del vocabulario. Se generan con los puntos de las grabaciones de LSC-54, sin usar los videos.
+- **Señas animadas:** una figura de persona hace las 33 señas del vocabulario. Se generan con los puntos de las grabaciones de LSC-54, sin usar los videos; las manos se completan donde MediaPipe las perdió y cada seña se encuadra entera.
+- **Guía del Deletreo:** tocando una letra del abecedario (y en Entrenar) se ve cómo se hace: la mano en grande y, en las letras con trazo, el movimiento con su recorrido. Sale de LSC70.
 - **Leer en voz alta y copiar** el texto traducido (voz de Windows o del teléfono, sin internet).
 - Guarda cada sesión y cada respuesta en un historial local.
 
@@ -164,7 +165,7 @@ python scripts/construir_ejecutable.py
 El script hace tres cosas:
 1. Empaqueta con PyInstaller ([empaquetado/silva.spec](empaquetado/silva.spec)).
 2. Verifica que el ejecutable cargue todos los modelos y traiga los datos para entrenar.
-3. Genera `dist/SILVA-v1.4.0-windows.zip`, que es el archivo que se sube a *Releases*.
+3. Genera `dist/SILVA-v1.4.1-windows.zip`, que es el archivo que se sube a *Releases*.
 
 **Android** (requiere el SDK de Android y un JDK 17 o más reciente, por ejemplo el de Android Studio):
 
@@ -176,11 +177,11 @@ python scripts/exportar_movil.py
 movil\gradlew.bat -p movil assembleRelease
 ```
 
-`exportar_movil.py` copia los modelos, los casos de prueba y la lista de palabras a `movil/app/src/main/assets`. El APK queda en `movil/app/build/outputs/apk/release/app-release.apk`; se renombra como `SILVA-v1.4.0-android.apk`. Está firmado con la clave de desarrollo: se instala sin problema, pero para la Play Store habría que firmarlo con una clave propia.
+`exportar_movil.py` copia los modelos, los casos de prueba y la lista de palabras a `movil/app/src/main/assets`. El APK queda en `movil/app/build/outputs/apk/release/app-release.apk`; se renombra como `SILVA-v1.4.1-android.apk`. Está firmado con la clave de desarrollo: se instala sin problema, pero para la Play Store habría que firmarlo con una clave propia.
 
 Pasos para publicar:
 1. En GitHub, entre a **Releases** y luego a **Draft a new release**.
-2. Cree la etiqueta `v1.4.0`.
+2. Cree la etiqueta `v1.4.1`.
 3. Adjunte el `.zip` y el `.apk`.
 4. Publique con **Publish release**.
 
@@ -215,7 +216,7 @@ Para extraerlos de nuevo desde los videos:
 1. Descargue los tres zips de `RawVideos` de [LSC-54](https://doi.org/10.57760/sciencedb.25639) (unos 970 MB) en `data/externo/lsc54/`.
 2. Ejecute `python scripts/extraer_lsc54.py`. En un equipo de 16 núcleos tarda unos 30–40 minutos.
 
-Después de reentrenar, `python scripts/generar_animaciones.py` regenera las señas animadas y `python scripts/exportar_movil.py` lleva los modelos a la app de Android.
+Después de reentrenar, `python scripts/generar_animaciones.py` regenera las señas animadas y las guías de las letras y `python scripts/exportar_movil.py` lleva los modelos a la app de Android.
 
 ## Arquitectura
 
@@ -246,7 +247,7 @@ SILVA/
 │   ├── letras_movimiento.py    Letras con trazo (G H J Ñ Q S Z)
 │   ├── buffer_texto.py         BufferTexto (regla de 0,60 y 5 cuadros)
 │   ├── sugerencias.py          «¿Quisiste decir?» al deletrear
-│   ├── animacion.py            Señas animadas
+│   ├── animacion.py            Señas animadas y guías de las letras
 │   ├── repositorio_historial.py RepositorioHistorial (SQLite: sesiones, letras, respuestas)
 │   ├── config.py               Rutas y constantes (también dentro del ejecutable)
 │   └── modelo.py               Landmark, Mano, Prediccion
