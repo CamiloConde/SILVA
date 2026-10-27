@@ -2,7 +2,7 @@
 
 ## Pruebas automáticas
 
-Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **90 de 90 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
+Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **91 de 91 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
 
 Las tablas registran cada prueba en la versión en que se agregó. En la versión 1.3 el umbral de letras bajó de 0,80 a 0,60 (PR-02 ahora usa 0,59) y el modelo de letras quietas pasó de 17 a 20 letras (PR-08).
 
@@ -177,4 +177,13 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-85 | Datos | Elección de la guía de cada letra en LSC70 | Mano visible en las 6 imágenes, clara para los modelos, vista de frente y sin saltos | 27 guías; se descartaron grabaciones con saltos de la muñeca de hasta 7 palmas (H, S) | Aprobada |
 | PR-86 | Funcional (Galaxy A35) | Abecedario → J; Vocabulario → Bienvenido | La guía y la figura se ven completas | Correcto | Aprobada |
 | PR-87 | Usabilidad | Que una persona que sabe LSC revise las 27 guías | Cada guía muestra la letra correcta | | Pendiente |
+
+## Reposo sentado (27/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-88 | Unitaria (Python y Kotlin) | Persona sentada con las manos sobre la mesa (0,5 anchos de hombro bajo los hombros) hace una seña | La seña termina al volver las manos a la mesa, sin un tramo falso al empezar | Sin reposo aprendido: cortada a los 4 s. Con él: una seña de menos de 1,5 s | Aprobada |
+| PR-89 | Precisión (`evaluar_reposo.py --completo`) | LSC-54 de pie, personas no vistas, 30 y 15 cuadros/s | No empeora | 51,0 → 51,2 % y 51,5 → 51,8 % escritas bien; palabras falsas 0,6-0,8 % | Aprobada |
+| PR-90 | Precisión | Muestras propias grabadas sentado | Menos señas cortadas a los 4 s | 50 → 56 % cortadas a tiempo (las muestras miden mal el cambio) | Parcial |
+| PR-91 | Funcional (manual) | Usar SILVA sentado con las manos sobre la mesa entre señas, en el PC y en el teléfono | Cada palabra se escribe al bajar las manos, sin esperar 4 s | | Pendiente |
 

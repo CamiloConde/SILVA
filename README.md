@@ -1,6 +1,6 @@
 # SILVA
 
-**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.4.1
+**Sistema Inteligente de Lenguaje Visual Aumentado** · versión 1.4.2
 
 SILVA traduce a texto, en tiempo real, señas de la Lengua de Señas Colombiana (LSC) captadas con una cámara, y permite que la persona oyente responda por escrito o por voz, con las señas animadas. Funciona en Windows y en teléfonos Android. Todo se procesa en el equipo: no necesita internet ni envía video a ningún servidor.
 
@@ -12,14 +12,14 @@ Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bol�
 
 En [Releases](https://github.com/CamiloConde/SILVA/releases) están los dos archivos de la última versión.
 
-**Windows** · `SILVA-v1.4.1-windows.zip` (unos 372 MB)
+**Windows** · `SILVA-v1.4.2-windows.zip` (unos 372 MB)
 1. Descomprímalo completo y abra `SILVA\SILVA.exe`.
    - Si Windows muestra «Windows protegió su PC», elija *Más información → Ejecutar de todas formas*. Aparece porque el ejecutable no está firmado digitalmente.
 2. Presione **Iniciar** (o Enter).
 
 Requisitos: Windows 10/11 de 64 bits, cámara web, 8 GB de RAM recomendados. El historial se guarda en `%LOCALAPPDATA%\SILVA\historial.db`. Para comprobar una instalación: `SILVA.exe --verificar --camara` crea un informe en `%LOCALAPPDATA%\SILVA\verificacion.txt`.
 
-**Android** · `SILVA-v1.4.1-android.apk` (unos 88 MB)
+**Android** · `SILVA-v1.4.2-android.apk` (unos 88 MB)
 1. Copie el `.apk` al teléfono (por cable a la carpeta *Download*, o por Google Drive) y ábralo desde *Archivos*.
 2. Si Android lo pide, permita instalar apps de esa fuente. Si Play Protect avisa que la app no es conocida, toque *Más detalles → Instalar de todas formas*. El aviso sale porque la app no viene de la Play Store.
 3. Abra SILVA y toque **Iniciar**. Pide la cámara; el micrófono solo si usa **Hablar**.
@@ -30,7 +30,7 @@ Requisitos: Android 7 o más reciente. La app no tiene permiso de internet, así
 
 | Modo | Qué reconoce | Cómo se usa |
 |---|---|---|
-| **Palabras** (modo inicial) | 33 expresiones de cortesía con movimiento: Apoyar, Ayudar, Baño, Bien, Bienvenido, Buenas noches, Buenas tardes, Buenos días, Chao, ¿Cómo está?, Con gusto, De nada, Esperar, Excelente, Gracias, Hola, Invitar, Lo siento, Mal, Más o menos, Muchas gracias, Muy bien, Muy mal, Necesitar, No, Perdón, Perfecto, Permiso, Por favor, Presentar, Sentarse, Sí, Tranquilo | Deben verse los hombros y las manos; una silueta indica dónde ubicarse. Empiece con las manos abajo, haga la seña y vuelva a bajarlas |
+| **Palabras** (modo inicial) | 33 expresiones de cortesía con movimiento: Apoyar, Ayudar, Baño, Bien, Bienvenido, Buenas noches, Buenas tardes, Buenos días, Chao, ¿Cómo está?, Con gusto, De nada, Esperar, Excelente, Gracias, Hola, Invitar, Lo siento, Mal, Más o menos, Muchas gracias, Muy bien, Muy mal, Necesitar, No, Perdón, Perfecto, Permiso, Por favor, Presentar, Sentarse, Sí, Tranquilo | Deben verse los hombros y las manos; una silueta indica dónde ubicarse. Empiece con las manos abajo, haga la seña y vuelva a bajarlas. Sentado, basta con volver las manos a la mesa: la app aprende dónde descansan |
 | **Deletreo** | Las **27 letras** del alfabeto dactilológico. 20 se sostienen quietas (A B C D E F I K L M N O P R T U V W X Y) y 7 se trazan (G H J Ñ Q S Z) | Sostenga la seña hasta que se llenen los 5 segmentos (confianza ≥ 0,60 durante 5 cuadros). Para las letras con trazo, haga la forma, trace el movimiento y quédese quieto un momento |
 | **Responder** (Ctrl+R) / **Texto a señas** | — | La persona oyente escribe (o dicta, en el teléfono) y el texto se muestra en grande, con la seña animada de cada palabra del vocabulario |
 
@@ -165,7 +165,7 @@ python scripts/construir_ejecutable.py
 El script hace tres cosas:
 1. Empaqueta con PyInstaller ([empaquetado/silva.spec](empaquetado/silva.spec)).
 2. Verifica que el ejecutable cargue todos los modelos y traiga los datos para entrenar.
-3. Genera `dist/SILVA-v1.4.1-windows.zip`, que es el archivo que se sube a *Releases*.
+3. Genera `dist/SILVA-v1.4.2-windows.zip`, que es el archivo que se sube a *Releases*.
 
 **Android** (requiere el SDK de Android y un JDK 17 o más reciente, por ejemplo el de Android Studio):
 
@@ -177,11 +177,11 @@ python scripts/exportar_movil.py
 movil\gradlew.bat -p movil assembleRelease
 ```
 
-`exportar_movil.py` copia los modelos, los casos de prueba y la lista de palabras a `movil/app/src/main/assets`. El APK queda en `movil/app/build/outputs/apk/release/app-release.apk`; se renombra como `SILVA-v1.4.1-android.apk`. Está firmado con la clave de desarrollo: se instala sin problema, pero para la Play Store habría que firmarlo con una clave propia.
+`exportar_movil.py` copia los modelos, los casos de prueba y la lista de palabras a `movil/app/src/main/assets`. El APK queda en `movil/app/build/outputs/apk/release/app-release.apk`; se renombra como `SILVA-v1.4.2-android.apk`. Está firmado con la clave de desarrollo: se instala sin problema, pero para la Play Store habría que firmarlo con una clave propia.
 
 Pasos para publicar:
 1. En GitHub, entre a **Releases** y luego a **Draft a new release**.
-2. Cree la etiqueta `v1.4.1`.
+2. Cree la etiqueta `v1.4.2`.
 3. Adjunte el `.zip` y el `.apk`.
 4. Publique con **Publish release**.
 

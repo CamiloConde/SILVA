@@ -231,3 +231,20 @@ El segmentador decidía cuándo empieza y termina una seña contando cuadros, co
 | 7,5 | por segundos | **37,8 %** | 1,4 % | 19,6 % | 41,2 % | 0,3 % |
 
 1 198 videos del vocabulario y 792 de señas ajenas (colores y números). A 15 cuadros/s, la velocidad de un teléfono como el Galaxy A35, la app ahora escribe tantas señas como a 30.
+
+## Reposo sentado: el segmentador aprende dónde descansan las manos
+
+El segmentador da una seña por terminada cuando las manos vuelven al reposo: muñecas a más de 0,8 anchos de hombro bajo los hombros, valor que sale de LSC-54, donde las personas graban de pie con los brazos caídos (reposo a ~1,36). Sentada frente a un PC o un teléfono, la persona descansa las manos sobre la mesa o el regazo: en las muestras grabadas con la app, entre 0,3 y 0,7. Para la regla general las manos seguían «levantadas», la seña no terminaba y se cortaba a los 4 s (12 de 34 muestras).
+
+Ahora, en vivo, el segmentador aprende el reposo de cada mano: si la muñeca queda quieta un segundo (menos de 0,6 anchos de hombro por segundo), esa altura es su reposo, y la mano cuenta como levantada solo si sube 0,25 por encima de él. Un reposo nunca se aprende por encima de 0,3 (a media altura del pecho: más arriba es una pausa dentro de la seña) y nunca hace más estricta la regla general. Al encender la cámara, antes de aprender el reposo, unas manos quietas sobre la mesa podían formar un tramo «levantado» sin movimiento: un tramo sin ningún movimiento no se toma como seña.
+
+`scripts/evaluar_reposo.py --completo`:
+
+| Prueba | Sin reposo aprendido (1.4.1) | Con reposo aprendido |
+|---|---|---|
+| Muestras propias, sentado (34): seña cortada antes de 4 s | 50 % | 56 % |
+| LSC-54 de pie, personas no vistas, 30 cuadros/s: escritas bien · palabras falsas | 51,0 % · 0,6 % | 51,2 % · 0,8 % |
+| LSC-54 de pie, 15 cuadros/s: escritas bien · palabras falsas | 51,5 % · 0,8 % | 51,8 % · 0,8 % |
+
+Con personas de pie no cambia. Las muestras propias miden mal este cambio: las cortó el segmentador anterior y su reposo está a alturas distintas en cada una. El caso que lo motiva (manos quietas sobre la mesa a 0,5) lo reproducen `test_sentado_la_sena_termina_al_volver_las_manos_a_la_mesa` (Python) y `ReposoTest` (Kotlin): sin reposo aprendido la seña se corta a los 4 s; con él termina en menos de 1,5 s. Falta medirlo con una sesión continua grabada sentado.
+
