@@ -12,7 +12,9 @@ El autor declara en `CERTIFICATE.md` que lo publica como código abierto y permi
 
 **Conversión:** `scripts/preparar_dataset.py` toma cada cuadro de cada secuencia de las letras estáticas como una muestra independiente → 15 810 muestras de 17 letras (527 secuencias), guardadas en `data/landmarks/externo_juanplazas.npz`.
 
-## Por qué solo 17 letras
+## Por qué al principio solo 17 letras (hasta la versión 1.2)
+
+> Desde la versión 1.3 SILVA reconoce las 27 letras: ver [Versión 1.3](#versión-13-las-27-letras-seguimiento-y-teléfono) al final.
 
 En LSC varias letras del alfabeto dactilológico se hacen con movimiento. Se midió el desplazamiento medio de los landmarks entre cuadros consecutivos de cada letra en el dataset:
 
@@ -21,7 +23,7 @@ En LSC varias letras del alfabeto dactilológico se hacen con movimiento. Se mid
 | Estáticas (incluidas en el MVP) | A B C D E F I K L O R T U V W X Y | 0,11 – 0,29 |
 | Dinámicas (fuera de alcance) | G H J M N Ñ P Q S Z | 1,12 – 4,40 |
 
-La separación es clara (un orden de magnitud), y coincide con lo declarado fuera de alcance en el planteamiento ("reconocimiento de señas dinámicas"). Un clasificador cuadro a cuadro como Random Forest no puede distinguir letras que dependen de la trayectoria; reconocerlas requeriría un modelo de secuencias (por ejemplo LSTM, como hace el proyecto de origen).
+La separación es clara (un orden de magnitud), y coincide con lo declarado fuera de alcance en el planteamiento ("reconocimiento de señas dinámicas"). Un clasificador cuadro a cuadro como Random Forest no puede distinguir letras que dependen de la trayectoria; reconocerlas requiere un modelo que vea la secuencia, que es lo que agregó la versión 1.3.
 
 ## Limitación conocida y cómo atenderla
 
@@ -77,7 +79,7 @@ Los números del 1 al 10 son configuraciones de mano casi estáticas que se conf
    - El modelo tiene una clase extra, **«otra cosa»**, aprendida con las señas de colores y números de LSC-54.
    - Una seña se escribe (provisional) si su probabilidad supera el umbral **y** a «otra cosa».
    - Si es dudosa, se ofrece como «¿Quiso decir…?».
-   - El umbral se elige para que lo escrito solo acierte ≥ 95 % y escriba a lo sumo un 15 % de señas ajenas; hoy es 0,25.
+   - El umbral se elige para que lo escrito solo acierte ≥ 95 % y escriba a lo sumo un 15 % de señas ajenas; hoy es 0,20.
    - Ver [metricas_palabras.md](metricas_palabras.md).
 
 ## Rechazo de movimientos ajenos (versión 1.1)
@@ -154,3 +156,59 @@ El 12–15 % restante se pierde por desenfoque, por la mano frente a la cara o p
 - **Umbral:** se usa 0,4 en modo Palabras, también al extraer LSC-54 para entrenar.
 - **Mano aproximada:** se dibuja la mano que estima el esqueleto cuando la detección se pierde.
 - **Aviso de poca luz:** con poca luz la cámara alarga la exposición y los movimientos salen borrosos.
+
+
+---
+
+# Versión 1.3: las 27 letras, seguimiento y teléfono
+
+## Letras M, N y P: al modelo de letras quietas
+
+En LSC70 la mano de la M, la N y la P casi no se mueve entre las 6 imágenes de cada seña (a diferencia de lo medido en el dataset de JuanPlazas). Por eso se agregaron al modelo cuadro a cuadro, que pasó de 17 a 20 letras. Con personas no vistas de LSC70 acierta el 88,2 % (con 17 letras: 88,5 %).
+
+## Letras G, H, J, Ñ, Q, S y Z: modelo de trazo
+
+`scripts/preparar_lsc70_secuencias.py` guarda, para cada seña de LSC70, los puntos de la mano en sus 6 imágenes, más la posición y el tamaño de la mano en la imagen: 1 851 señas de 70 personas (`data/landmarks/lsc70_secuencias.npz`).
+
+1. **Segmentación en vivo** (`silva.letras_movimiento`): el trazo empieza cuando la muñeca se mueve más de 0,08 tamaños de mano por cuadro y termina tras 4 cuadros quieta (menos de 0,04). Si llega a 75 cuadros se cierra ahí; los de menos de 6 cuadros se descartan.
+2. **Vector fijo:** el trazo se remuestrea a 6 cuadros, como en LSC70: la forma de la mano en cada cuadro, la trayectoria de la muñeca respecto al inicio, y el recorrido total y el desplazamiento neto: 264 valores.
+3. **Clasificación:** Extra Trees de 200 árboles con las 27 letras como clases, aumentado con rotación, escala, recorte temporal y ruido. Solo se escriben G, H, J, Ñ, Q, S o Z; si gana una letra quieta, el trazo se ignora.
+4. **Regla del recorrido:** la muñeca debe recorrer al menos 0,4 tamaños de mano. Lo cumple el 90 % de las letras con trazo de LSC70; la mediana de las letras quietas está entre 0,1 y 0,35.
+5. **Umbral 0,4:** escribe el 58 % de las letras con trazo, con 96 % de acierto. Para medir letras falsas se armaron 2 800 pasos de una letra quieta a otra con imágenes de LSC70: en el 9 % sale una letra con trazo que nadie hizo.
+
+Si una letra con trazo empieza con la forma de una quieta (la J empieza como la I), la quieta puede alcanzar a escribirse; el trazo la reemplaza si llega dentro de 0,6 s.
+
+**Límite:** LSC70 no trae video, así que la segmentación en vivo (cuándo empieza y termina el trazo) no se pudo medir con datos; se ajusta con la cámara.
+
+Detalle: [metricas_letras_movimiento.md](metricas_letras_movimiento.md).
+
+## Umbral de las letras quietas: de 0,80 a 0,60
+
+Con personas no vistas de LSC70, la regla de 0,80 solo escribía el 70 % de las señas. Con manos que el modelo no conoce, como las de quien prueba la app por primera vez, muchas letras no llegaban nunca. Con 0,60 (y los mismos 5 cuadros estables):
+
+| Umbral | Señas que escribe | Acierto de lo escrito |
+|---|---|---|
+| 0,80 | 70,2 % | 98,5 % |
+| **0,60** | **84,8 %** | **96,1 %** |
+
+## Seguimiento de la mano y fluidez en modo Palabras
+
+- **Recuperación de la mano perdida:** cuando MediaPipe no encuentra una mano que no está en reposo, se busca de nuevo en un recorte cuadrado de 1,8 anchos de hombro alrededor de la muñeca de la pose, ampliado a 256 px. Se descarta si queda lejos de esa muñeca o si es la otra mano otra vez. En 40 videos de LSC-54, la mano que hace la seña pasa de detectarse en el **70 % al 81 %** de los cuadros.
+- **Fluidez:** la cámara a 1280×720 solo entregaba 10 cuadros por segundo. Ahora pide 640×360, la misma vista a 30 cuadros por segundo, y la pose y las manos se calculan en paralelo: 19 ms por cuadro en vez de 29.
+- **Modelo reentrenado:** LSC-54 se volvió a extraer con la recuperación, para que entrenamiento y uso vean lo mismo. Con personas no vistas acierta el 85,3 % y escribe solo el 56 % de las señas con 95,7 % de acierto (v1.2: 53 % con 96,3 %). Ver [metricas_palabras.md](metricas_palabras.md).
+
+## La app de Android
+
+El teléfono usa los mismos clasificadores. `scripts/exportar_movil.py` los convierte a un formato binario propio (cabecera `SILVAARB` y los árboles en arreglos planos) que la app recorre en Kotlin, y genera casos de prueba con las características y probabilidades que calcula Python. Las 12 pruebas de Kotlin comprueban que el teléfono da los mismos números.
+
+**El teléfono en vertical:** el modelo de letras depende de la proporción de la imagen (se entrenó con imágenes 4:3 horizontales), así que en vertical las coordenadas de la mano se corrigen para que el modelo vea la misma geometría; una prueba comprueba que la misma mano da los mismos valores en ambos sentidos. En Palabras, los brazos tienen que caber a lo ancho, así que la guía de encuadre usa rangos propios: los hombros deben ocupar entre el 22 % y el 40 % del ancho.
+
+**Prueba con videos conocidos:** se pasaron 12 videos de LSC-54 por la app en el emulador, por el mismo camino que la cámara (MediaPipe para Android, conversión de imagen, detección y clasificación):
+
+| Prueba | Resultado |
+|---|---|
+| Palabras, imagen horizontal | 8 escritas, 1 como «¿Quisiste decir?», 3 rechazadas: igual que la app de PC |
+| Palabras, recorte vertical | 6 escritas, 4 como «¿Quisiste decir?» |
+| Deletreo, 42 letras (umbral 0,80 → 0,60) | De 24 a 31 escritas, con 1 error |
+
+En vertical la persona se ve más pequeña. En una prueba en Python con videos de LSC-54, la app escribió el 80 % de las señas con la imagen completa, el 68 % con el recorte vertical y el 77 % con el recorte vertical y la persona más lejos. Por eso se recomienda apoyar el teléfono a 1,5–2 m.

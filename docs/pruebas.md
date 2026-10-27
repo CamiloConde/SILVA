@@ -2,7 +2,9 @@
 
 ## Pruebas automáticas
 
-Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (8/10/2026, Windows 11, Python 3.12.10): **30 de 30 aprobadas**.
+Se ejecutan con `python -m pytest -v`. Resultado de la última ejecución (27/10/2026, Windows 11, Python 3.12.10): **81 de 81 aprobadas**, más 12 de 12 de la app de Android (`movil\gradlew.bat -p movil testDebugUnitTest`).
+
+Las tablas registran cada prueba en la versión en que se agregó. En la versión 1.3 el umbral de letras bajó de 0,80 a 0,60 (PR-02 ahora usa 0,59) y el modelo de letras quietas pasó de 17 a 20 letras (PR-08).
 
 | ID | Tipo | Requerimiento | Escenario | Resultado esperado | Resultado obtenido | Estado | Prueba |
 |---|---|---|---|---|---|---|---|
@@ -128,3 +130,25 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-53 | Precisión (palabras) | Modelo v1.2 (+LSC50), personas de LSC50 no vistas | Mejor que PR-52 | 77,1 % (entre las 3 primeras: 91,8 %) | Aprobada |
 | PR-54 | Seguimiento | Detección de la mano en 4 512 cuadros de seña, umbral 0,6 vs 0,4 y media resolución | — | 84,9 % → 87,2 %; la resolución no influye | Medido |
 | PR-55 | Interfaz | Aviso de poca luz y mano aproximada (`test_interfaz.py`, `test_palabras.py`) | Aviso con imagen oscura; trazos de la mano perdida | Correcto | Aprobada |
+
+## Versión 1.3: 27 letras, seguimiento, diseño nuevo y app de Android (27/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-56 | Precisión (letras) | Modelo de 20 letras quietas (+M, N, P), personas no vistas de LSC70 | Igual que la v1.2 | 88,2 % (v1.2 con 17 letras: 88,5 %) | Aprobada |
+| PR-57 | Precisión (letras con trazo) | G H J Ñ Q S Z, validación cruzada por persona en LSC70, umbral 0,4 | Lo escrito acierta ≥ 95 % | Escribe el 58 % con 96,3 % de acierto; 9 % de letras falsas al pasar de una letra quieta a otra | Aprobada |
+| PR-58 | Unitaria (`test_letras_movimiento.py`) | Mano quieta, trazo completo, temblor corto, mano perdida, J que empieza como I, trazo que no es letra | Solo el trazo completo escribe; la J reemplaza a la I | Correcto (9 pruebas) | Aprobada |
+| PR-59 | Precisión (letras) | Umbral 0,80 → 0,60, personas no vistas de LSC70 | Escribir más sin bajar mucho el acierto | Escribe 70,2 % → 84,8 %; acierto 98,5 % → 96,1 % | Aprobada |
+| PR-60 | Seguimiento | Recuperación de la mano en un recorte alrededor de la muñeca, 40 videos de LSC-54 | Más cuadros con la mano detectada | 70 % → 81 % de los cuadros | Aprobada |
+| PR-61 | Rendimiento | Modo Palabras: cámara a 640×360 y pose y manos en paralelo | ≥ 15 FPS | La cámara pasa de 10 a 30 cuadros por segundo; 19 ms por cuadro (antes 29) | Aprobada |
+| PR-62 | Precisión (palabras) | Modelo reentrenado con LSC-54 extraído con la recuperación, personas no vistas | Igual o mejor que la v1.2 | 85,3 %; escribe solo el 56,4 % con 95,7 % de acierto (v1.2: 53 % con 96,3 %) | Aprobada |
+| PR-63 | Integración (`test_palabras.py`, `test_interfaz.py`) | Palabra escrita al instante; cambiarla con 1–3 o borrarla con X durante 3 s | Se escribe enseguida y se puede corregir | Correcto | Aprobada |
+| PR-64 | Integración (`test_interfaz.py`, `test_buffer_texto.py`) | «¿Quisiste decir?» al deletrear «HOLA MUN» | Sugiere MUNDO y lo completa con un clic | Correcto | Aprobada |
+| PR-65 | Integración (`test_animacion.py`) | Una animación por palabra; buscar las señas de una frase | 33 animaciones; «Muchas gracias» se toma como una sola seña | Correcto | Aprobada |
+| PR-66 | Despliegue | `SILVA.exe --verificar` de la v1.3.0 | Carga todos los modelos, incluido el de letras con trazo | Todo correcto | Aprobada |
+| PR-67 | Unitaria (Kotlin, `IgualQuePythonTest.kt`) | Características, probabilidades de los tres modelos, constantes, búsqueda de señas, sugerencias y corrección vertical, contra casos de Python | Mismos valores | 12 de 12 | Aprobada |
+| PR-68 | Funcional (emulador Android) | 12 videos de LSC-54 por la app del teléfono, por el mismo camino que la cámara | Igual que la app de PC | 8 escritas, 1 como «¿Quisiste decir?», 3 rechazadas: idéntico. Con recorte vertical: 6 escritas y 4 sugeridas | Aprobada |
+| PR-69 | Funcional (emulador Android) | 42 letras de LSC70 por la app del teléfono, umbral 0,80 y 0,60 | Escribir más letras con 0,60 | 24 → 31 escritas, con 1 error | Aprobada |
+| PR-70 | No funcional (RNF-01) | Permisos del APK | Sin permiso de internet | Solo cámara y micrófono (este último solo para «Hablar») | Aprobada |
+| PR-71 | Funcional (teléfono real) | Señas a texto en Palabras y Deletreo con buena luz, teléfono apoyado a 1,5–2 m | Reconoce como en el emulador; registrar los FPS | | Pendiente |
+| PR-72 | Funcional (teléfono real) | «Hablar», «Escuchar» y «Leer en voz alta» con audio real | Funcionan sin internet | | Pendiente |

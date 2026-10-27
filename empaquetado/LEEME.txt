@@ -9,17 +9,20 @@ CÓMO USARLO
 3. Presione «Iniciar» (o Enter) y permita el acceso a la cámara si Windows lo pide.
 
 MODOS
-- Deletreo: 17 letras estáticas del alfabeto dactilológico (A B C D E F I K L O R T U V W X Y).
-  Sostenga la seña hasta que la barra de estabilidad se llene.
-- Palabras: 33 expresiones de cortesía (hola, gracias, por favor, buenos días…).
-  Deben verse sus hombros y manos. Empiece con las manos abajo, haga la seña y vuelva a bajarlas.
-  La palabra reconocida aparece primero como provisional (2,5 s): Espacio la confirma, 1-3 la
-  cambian por otra opción y X la descarta; si nadie hace nada, se escribe sola. Si la seña es dudosa
-  aparece «¿Quiso decir…?» y solo se escribe la opción que alguien elija.
-- Cámara: en el encabezado se elige la cámara (por ejemplo el celular como cámara web con Enlace
-  Móvil de Windows 11, DroidCam o Iriun). Si aparece «Aléjese un poco», una mano se sale del cuadro.
-- Responder (Ctrl+R): la persona oyente escribe su respuesta y se muestra en grande para que
-  la persona sorda la lea.
+- Palabras (modo inicial): 33 expresiones de cortesía (hola, gracias, por favor, buenos días…).
+  Deben verse sus hombros y manos; la silueta indica dónde ubicarse. Empiece con las manos abajo,
+  haga la seña y vuelva a bajarlas. La palabra se escribe enseguida; durante 3 s, 1-3 la cambian
+  por otra opción y X la borra. Si la seña es dudosa aparece «¿Quisiste decir?» y solo se escribe
+  la opción que alguien elija.
+- Deletreo: las 27 letras del alfabeto dactilológico. Las quietas (A B C D E F I K L M N O P R T
+  U V W X Y) se sostienen hasta llenar los 5 segmentos. Las de trazo (G H J Ñ Q S Z): haga la
+  forma, trace el movimiento y quédese quieto un momento. «¿Quisiste decir?» sugiere cómo
+  completar la palabra.
+- Responder (Ctrl+R): la persona oyente escribe su respuesta y se muestra en grande, con la seña
+  animada de las palabras del vocabulario.
+- Leer en voz alta y Copiar: leen o copian el texto traducido.
+- Ajustes: elegir la cámara (por ejemplo el celular como cámara web con DroidCam o Iriun) y el
+  tamaño del texto.
 
 REQUISITOS
 Windows 10 u 11 de 64 bits, cámara web, 8 GB de RAM recomendados. No necesita internet ni
@@ -34,3 +37,4 @@ Crea el informe %LOCALAPPDATA%\SILVA\verificacion.txt
 
 Código fuente, documentación y créditos: https://github.com/CamiloConde/SILVA
 Licencias de terceros: TERCEROS.md
+También hay una app para Android en la misma página de descargas (Releases).
