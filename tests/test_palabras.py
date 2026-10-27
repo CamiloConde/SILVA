@@ -194,12 +194,12 @@ def _avanzar(ctrl, reloj, cuadros, paso=1 / 30):
     return resultados
 
 
-def test_sena_segura_queda_provisional_y_se_escribe_sola():
+def test_sena_segura_se_escribe_apenas_se_reconoce():
     ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.9, 0.05)])
     r = _avanzar(ctrl, reloj, 10)[-1]
-    assert r.pendiente.automatica and r.pendiente.opciones[0].letra == "Hola"
-    assert ctrl.buffer.texto == ""  # todavía no se escribe
-    _avanzar(ctrl, reloj, 90)  # 3 s después
+    assert r.letra_confirmada == "Hola" and ctrl.buffer.texto == "Hola"  # sin esperar
+    assert r.pendiente.automatica and r.pendiente.opciones[0].letra == "Hola"  # pero se puede corregir
+    _avanzar(ctrl, reloj, 100)  # pasado el plazo de corrección
     assert ctrl.buffer.texto == "Hola" and ctrl.pendiente is None
     assert [l for l, _ in ctrl.historial.letras_de_sesion(ctrl.sesion_id)] == ["Hola"]
 
@@ -224,23 +224,32 @@ def test_sena_dudosa_es_sugerencia_y_solo_se_escribe_si_se_elige():
     assert ctrl.buffer.texto == "Chao"
 
 
-def test_corregir_y_descartar_la_provisional():
+def test_cambiar_y_borrar_la_palabra_escrita():
     ctrl, reloj = _controlador(fines=[10, 40], salidas=[("Hola", 0.9, 0.0), ("No", 0.8, 0.0)])
     _avanzar(ctrl, reloj, 10)
-    assert ctrl.confirmar_pendiente(2) == "Bien"  # la tercera opción
-    _avanzar(ctrl, reloj, 30)
-    ctrl.descartar_pendiente()
-    _avanzar(ctrl, reloj, 120)
+    assert ctrl.confirmar_pendiente(2) == "Bien"  # no era «Hola»: la tercera opción la reemplaza
     assert ctrl.buffer.texto == "Bien"
+    _avanzar(ctrl, reloj, 30)
+    assert ctrl.buffer.texto == "Bien No"
+    ctrl.descartar_pendiente()  # X: «No» se borra
+    _avanzar(ctrl, reloj, 120)
+    assert ctrl.buffer.texto.strip() == "Bien"
 
 
-def test_empezar_otra_sena_acepta_la_provisional():
+def test_confirmar_la_palabra_escrita_no_la_repite():
+    ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.9, 0.0)])
+    _avanzar(ctrl, reloj, 10)
+    assert ctrl.confirmar_pendiente(0) == "Hola"  # Espacio: era correcta
+    assert ctrl.buffer.texto == "Hola" and ctrl.pendiente is None
+
+
+def test_empezar_otra_sena_cierra_la_correccion():
     ctrl, reloj = _controlador(fines=[10, 30], salidas=[("Hola", 0.9, 0.0), ("Gracias", 0.9, 0.0)])
-    _avanzar(ctrl, reloj, 26)  # la segunda seña empieza en el cuadro 25, antes de los 2,5 s
-    assert ctrl.buffer.texto == "Hola"
+    _avanzar(ctrl, reloj, 31)
+    assert ctrl.buffer.texto == "Hola Gracias"
 
 
-def test_detener_escribe_la_provisional_y_descarta_la_sugerencia():
+def test_detener_conserva_la_palabra_y_descarta_la_sugerencia():
     ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.9, 0.0)])
     _avanzar(ctrl, reloj, 10)
     ctrl.detener()
@@ -254,8 +263,9 @@ def test_misma_palabra_casi_seguida_se_escribe_una_vez():
 
 
 def test_modo_palabras_pide_imagen_panoramica():
+    """16:9 a 640×360: a 1280×720 muchas cámaras web solo entregan 10 cuadros/s."""
     ctrl, _ = _controlador(fines=[], salidas=[])
-    assert ctrl.captura.resolucion == (1280, 720)
+    assert ctrl.captura.resolucion == (640, 360)
     from silva.controlador import MODO_LETRAS
     ctrl.cambiar_modo(MODO_LETRAS)
     assert ctrl.captura.resolucion == (640, 480)
@@ -272,7 +282,61 @@ def test_mano_perdida_se_dibuja_aproximada_desde_la_pose():
     assert zona.any()  # hay trazos donde está la mano izquierda aproximada
 
 
+def test_mano_perdida_se_recupera_desde_la_muneca_de_la_pose():
+    """Si MediaPipe pierde la mano, se busca en un recorte ampliado alrededor de la muñeca de la pose."""
+    import zipfile
+
+    import cv2
+
+    from silva.cuerpo import MANO_POSE_IZQ, DetectorCuerpo
+    from silva.detector_manos import DetectorManos
+
+    ruta = config.RAIZ_PROYECTO / "data" / "externo" / "lsc70" / "LSC70.zip"
+    if not ruta.exists():
+        pytest.skip("Falta data/externo/lsc70/LSC70.zip")
+    with zipfile.ZipFile(ruta) as z:
+        img = cv2.imdecode(np.frombuffer(z.read("LSC70/LSC70AN/Per05/A/Per05_A_2.jpg"), np.uint8), cv2.IMREAD_COLOR)
+    mano = DetectorManos().detectar(img, 0)
+    assert mano is not None
+    # pose inventada: hombros de ~0,25 del ancho y la muñeca izquierda donde está la mano
+    pose = [Landmark(0.5, 0.6) for _ in range(33)]
+    pose[11], pose[12] = Landmark(0.62, 0.6), Landmark(0.38, 0.6)
+    m = mano.landmarks
+    for i, k in zip(MANO_POSE_IZQ, (0, 17, 5, 2)):
+        pose[i] = m[k]
+    detector = DetectorCuerpo()
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    hombros = 0.24 * img.shape[1]
+    recuperada = DetectorCuerpo._buscar_en_recorte(detector._recuperadores[0], rgb, pose, MANO_POSE_IZQ, None, hombros)
+    assert recuperada is not None
+    assert abs(recuperada[0].x - m[0].x) < 0.03 and abs(recuperada[0].y - m[0].y) < 0.03
+    # la misma mano ya detectada como «la otra» no se acepta dos veces
+    assert DetectorCuerpo._buscar_en_recorte(detector._recuperadores[0], rgb, pose, MANO_POSE_IZQ, m, hombros) is None
+    detector.cerrar()
+
+
 def test_brillo_del_cuadro():
     from silva.controlador import _brillo
     assert _brillo(np.zeros((480, 640, 3), np.uint8)) == 0
     assert _brillo(np.full((480, 640, 3), 200, np.uint8)) == 200
+
+
+def _pose_en(cx, ancho, y_hombros=0.5, y_nariz=0.31):
+    p = [Landmark(cx, y_hombros) for _ in range(33)]
+    p[0] = Landmark(cx, y_nariz)
+    p[11], p[12] = Landmark(cx + ancho / 2, y_hombros), Landmark(cx - ancho / 2, y_hombros)
+    return p
+
+
+def test_encuadre_como_en_los_datos_de_entrenamiento():
+    from silva.cuerpo import evaluar_encuadre
+    def guia(*a, **k):
+        return evaluar_encuadre(CuadroCuerpo(_pose_en(*a, **k), None, None, 16 / 9))
+    assert guia(0.51, 0.21) is None  # la mediana medida en LSC-54
+    assert "Acércate" in guia(0.5, 0.10)
+    assert "Aléjate" in guia(0.5, 0.40)
+    assert "derecha" in guia(0.70, 0.21)  # x crece hacia la izquierda de la persona
+    assert "izquierda" in guia(0.30, 0.21)
+    assert "Baja" in guia(0.5, 0.21, y_hombros=0.3, y_nariz=0.05)
+    assert "Sube" in guia(0.5, 0.21, y_hombros=0.8, y_nariz=0.6)
+    assert evaluar_encuadre(CuadroCuerpo(None, None, None, 16 / 9)) is None

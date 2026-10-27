@@ -1,29 +1,29 @@
 # Métricas del modelo de palabras (LSC-54)
 
-Generado por `scripts/entrenar_palabras.py` el 2026-10-26T16:27:19.
+Generado por `scripts/entrenar_palabras.py` el 2026-10-26T22:20:57.
 
 - Datasets: LSC-54 (Mora-Zarate, 2025) y, si está, LSC50 (Flórez-Sierra et al., 2024).
   Vocabulario (33 señas): Apoyar, Ayudar, Baño, Bien, Bienvenido, Buenas noches, Buenas tardes, Buenos días, Chao, Con gusto, De nada, Esperar, Excelente, Gracias, Hola, Invitar, Lo siento, Mal, Muchas gracias, Muy bien, Muy mal, Más o menos, Necesitar, No, Perdón, Perfecto, Permiso, Por favor, Presentar, Sentarse, Sí, Tranquilo, ¿Cómo está?.
 - Clase de rechazo «otra cosa»: señas de LSC-54 fuera del vocabulario (Colores, LSC50-otras, Numeros),
   para que la app no escriba palabras ante cualquier movimiento.
-- 3880 videos de 39 firmantes; sin tramo activo detectado (descartados): 22
+- 3880 videos de 39 firmantes; sin tramo activo detectado (descartados): 17
 - Clasificador: Extra Trees (400 árboles, scikit-learn 1.9.1) sobre 5580 características
   (20 cuadros remuestreados de pose + ambas manos, sus velocidades y la forma de cada mano);
   aumento con espejo izquierda/derecha
-- Tiempo de clasificación: 12.0 ms por seña
+- Tiempo de clasificación: 13.4 ms por seña
 
 ## Evaluación con firmantes no vistos (6 pliegues, agrupados por firmante)
 
 | Métrica | Valor |
 |---|---|
-| Exactitud (mejor de las 33 opciones) | 85.2% |
-| …solo con las personas de LSC50 (otro entorno de grabación) | 77.1% (entre las 3 primeras: 91.8%) |
-| La seña correcta está entre las 3 primeras opciones | 95.5% |
-| Umbral de confianza elegido | 0.25 |
-| Señas reales que la app escribe sola | 53.4% |
-| Exactitud de lo que escribe | 96.3% |
-| Palabras falsas ante movimientos ajenos (categoría no vista) | 9.1% |
-| Señas reales que quedan como «¿Quiso decir…?» | 20.4% (la correcta está entre las 3 opciones en el 97%) |
+| Exactitud (mejor de las 33 opciones) | 85.3% |
+| …solo con las personas de LSC50 (otro entorno de grabación) | 76.7% (entre las 3 primeras: 91.8%) |
+| La seña correcta está entre las 3 primeras opciones | 95.7% |
+| Umbral de confianza elegido | 0.20 |
+| Señas reales que la app escribe sola | 56.4% |
+| Exactitud de lo que escribe | 95.7% |
+| Palabras falsas ante movimientos ajenos (categoría no vista) | 12.5% |
+| Señas reales que quedan como «¿Quiso decir…?» | 16.7% (la correcta está entre las 3 opciones en el 96%) |
 
 Regla de la app:
 - Si la mejor seña conocida supera el umbral **y** a «otra cosa», se escribe de forma
@@ -43,64 +43,64 @@ Las falsas quedan provisionales: se pueden descartar con X antes de que se escri
 
 | Umbral | Señas escritas | Exactitud de lo escrito | Palabras falsas |
 |---|---|---|---|
-| 0.10 | 61.2% | 92.7% | 25.7% |
-| 0.15 | 60.6% | 93.1% | 21.5% |
-| 0.20 | 57.8% | 94.7% | 14.6% |
-| 0.25 | 53.4% | 96.3% | 9.1% |
-| 0.30 | 47.7% | 97.2% | 5.9% |
-| 0.35 | 41.2% | 98.2% | 3.9% |
-| 0.40 | 35.7% | 98.1% | 2.7% |
-| 0.45 | 29.3% | 98.4% | 2.4% |
-| 0.50 | 23.7% | 99.1% | 1.9% |
-| 0.55 | 19.2% | 98.9% | 1.6% |
-| 0.60 | 15.0% | 99.1% | 1.5% |
-| 0.65 | 12.1% | 99.4% | 0.8% |
-| 0.70 | 8.9% | 99.2% | 0.3% |
-| 0.75 | 5.7% | 98.8% | 0.2% |
-| 0.80 | 4.0% | 98.3% | 0.0% |
+| 0.10 | 59.5% | 94.3% | 22.8% |
+| 0.15 | 58.9% | 94.6% | 18.6% |
+| 0.20 | 56.4% | 95.7% | 12.5% |
+| 0.25 | 51.5% | 97.0% | 7.4% |
+| 0.30 | 46.6% | 97.7% | 4.1% |
+| 0.35 | 41.0% | 98.7% | 2.3% |
+| 0.40 | 36.2% | 98.9% | 1.3% |
+| 0.45 | 30.4% | 99.1% | 0.7% |
+| 0.50 | 24.4% | 99.7% | 0.4% |
+| 0.55 | 19.6% | 99.7% | 0.2% |
+| 0.60 | 15.5% | 99.6% | 0.2% |
+| 0.65 | 12.4% | 99.5% | 0.1% |
+| 0.70 | 9.1% | 99.3% | 0.0% |
+| 0.75 | 6.3% | 98.9% | 0.0% |
+| 0.80 | 3.9% | 100.0% | 0.0% |
 
 <details><summary>Reporte por seña (mejor opción)</summary>
 
 ```
                 precision    recall  f1-score   support
 
-        Apoyar      1.000     0.962     0.980        26
-        Ayudar      0.831     0.907     0.867        54
-          Baño      0.719     0.885     0.793        26
-          Bien      0.859     0.905     0.882        74
-    Bienvenido      0.915     0.896     0.905        48
- Buenas noches      0.933     0.909     0.921        77
- Buenas tardes      0.848     0.893     0.870        75
-   Buenos días      0.899     0.959     0.928        74
-          Chao      0.825     0.855     0.839        55
-     Con gusto      0.864     0.809     0.835        47
-       De nada      0.855     0.964     0.906        55
-       Esperar      1.000     0.889     0.941        27
-     Excelente      1.000     0.852     0.920        27
-       Gracias      0.653     0.696     0.674        46
-          Hola      0.865     0.877     0.871        73
-       Invitar      0.833     0.556     0.667        27
-     Lo siento      0.897     0.929     0.912        28
-           Mal      0.790     0.901     0.842        71
-Muchas gracias      1.000     0.821     0.902        28
-      Muy bien      0.926     0.962     0.943        26
-       Muy mal      0.900     0.931     0.915        29
-   Más o menos      0.838     0.646     0.729        48
-     Necesitar      0.714     0.577     0.638        26
-            No      0.750     0.536     0.625        28
-        Perdón      0.733     0.904     0.810        73
-      Perfecto      0.964     1.000     0.982        27
-       Permiso      0.711     0.562     0.628        48
-     Por favor      0.820     0.973     0.890        75
-     Presentar      0.938     1.000     0.968        30
-      Sentarse      0.966     1.000     0.982        28
-            Sí      0.762     0.615     0.681        26
-     Tranquilo      0.917     0.423     0.579        26
-   ¿Cómo está?      0.956     0.878     0.915        49
+        Apoyar      0.929     1.000     0.963        26
+        Ayudar      0.839     0.963     0.897        54
+          Baño      0.733     0.846     0.786        26
+          Bien      0.890     0.878     0.884        74
+    Bienvenido      0.860     0.896     0.878        48
+ Buenas noches      0.920     0.896     0.908        77
+ Buenas tardes      0.823     0.867     0.844        75
+   Buenos días      0.887     0.959     0.922        74
+          Chao      0.814     0.873     0.842        55
+     Con gusto      0.870     0.851     0.860        47
+       De nada      0.871     0.982     0.923        55
+       Esperar      0.962     0.926     0.943        27
+     Excelente      0.958     0.852     0.902        27
+       Gracias      0.638     0.652     0.645        46
+          Hola      0.855     0.890     0.872        73
+       Invitar      0.842     0.593     0.696        27
+     Lo siento      0.963     0.929     0.945        28
+           Mal      0.851     0.887     0.869        71
+Muchas gracias      0.957     0.786     0.863        28
+      Muy bien      1.000     0.962     0.980        26
+       Muy mal      0.935     1.000     0.967        29
+   Más o menos      0.800     0.667     0.727        48
+     Necesitar      0.640     0.615     0.627        26
+            No      0.700     0.500     0.583        28
+        Perdón      0.767     0.904     0.830        73
+      Perfecto      1.000     1.000     1.000        27
+       Permiso      0.763     0.604     0.674        48
+     Por favor      0.857     0.960     0.906        75
+     Presentar      0.882     1.000     0.938        30
+      Sentarse      0.964     0.964     0.964        28
+            Sí      0.667     0.538     0.596        26
+     Tranquilo      0.882     0.577     0.698        26
+   ¿Cómo está?      0.951     0.796     0.867        49
 
-      accuracy                          0.852      1477
-     macro avg      0.863     0.832     0.841      1477
-  weighted avg      0.854     0.852     0.848      1477
+      accuracy                          0.853      1477
+     macro avg      0.857     0.837     0.842      1477
+  weighted avg      0.853     0.853     0.850      1477
 
 ```
 </details>

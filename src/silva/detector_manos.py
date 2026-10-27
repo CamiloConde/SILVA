@@ -89,6 +89,6 @@ def dibujar_mano(cuadro_bgr: np.ndarray, mano: Mano) -> None:
     alto, ancho = cuadro_bgr.shape[:2]
     puntos = [(int(lm.x * ancho), int(lm.y * alto)) for lm in mano.landmarks]
     for a, b in CONEXIONES_MANO:
-        cv2.line(cuadro_bgr, puntos[a], puntos[b], (80, 200, 120), 2)
+        cv2.line(cuadro_bgr, puntos[a], puntos[b], (205, 203, 200), 2, cv2.LINE_AA)
     for p in puntos:
-        cv2.circle(cuadro_bgr, p, 4, (255, 140, 40), cv2.FILLED)
+        cv2.circle(cuadro_bgr, p, 4, (245, 245, 245), cv2.FILLED, cv2.LINE_AA)
