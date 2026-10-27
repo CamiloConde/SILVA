@@ -22,13 +22,20 @@ datos = [
     (str(RAIZ / "recursos" / "silva_logo.png"), "recursos"),
 ]
 datos += collect_data_files("mediapipe", includes=["**/*.binarypb", "**/*.tflite", "**/*.txt"])
+# Entrenar (reentrenar con muestras propias): los datasets con que se entrenaron los modelos (solo puntos, ~56 MB).
+# Las muestras propias no se incluyen: son de cada persona y quedan en su carpeta de usuario.
+datos += [(str(a), "data/landmarks") for a in sorted((RAIZ / "data" / "landmarks").glob("*.npz"))
+          if not a.name.startswith("propias_")]
+# Los scripts de entrenamiento van como módulos (PyInstaller incluye así lo que importan)
+ENTRENAMIENTO = ["entrenar_con_muestras", "entrenar_modelo", "entrenar_letras_movimiento", "entrenar_palabras",
+                 "exportar_movil"]
 
 a = Analysis(  # noqa: F821
     [str(RAIZ / "empaquetado" / "lanzador.py")],
-    pathex=[str(RAIZ / "src")],
+    pathex=[str(RAIZ / "src"), str(RAIZ / "scripts")],
     binaries=collect_dynamic_libs("mediapipe"),
     datas=datos,
-    hiddenimports=["sklearn.ensemble._forest", "sklearn.tree._classes", "sklearn.utils._typedefs"],
+    hiddenimports=["sklearn.ensemble._forest", "sklearn.tree._classes", "sklearn.utils._typedefs", *ENTRENAMIENTO],
     excludes=[
         # No los usa SILVA (mediapipe los trae como dependencia opcional); excluirlos reduce el tamaño
         "jax", "jaxlib", "sounddevice", "tkinter", "pytest", "IPython", "PIL.ImageTk",

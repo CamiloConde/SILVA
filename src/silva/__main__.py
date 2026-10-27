@@ -78,6 +78,23 @@ def _cargar_movimiento():
         return None
 
 
+def _datos_para_entrenar() -> str:
+    """Los datasets y el módulo de entrenamiento que usa «Entrenar los modelos ahora»."""
+    from silva import config
+
+    carpeta = str((config.DIR_RECURSOS if config.EMPAQUETADO else config.RAIZ_PROYECTO) / "scripts")
+    if carpeta not in sys.path:
+        sys.path.insert(0, carpeta)
+    import entrenar_con_muestras  # noqa: F401 (comprueba que esté y que importe lo que necesita)
+
+    nombres = ("lsc54_secuencias.npz", "lsc50_secuencias.npz", "lsc70_letras.npz", "lsc70_secuencias.npz",
+               "externo_juanplazas.npz")
+    faltan = [n for n in nombres if not (config.DIR_LANDMARKS / n).exists()]
+    if faltan:
+        raise FileNotFoundError("faltan " + ", ".join(faltan))
+    return f"{len(nombres)} datasets en {config.DIR_LANDMARKS}"
+
+
 def verificar(destino: Path, con_camara: bool) -> bool:
     """Autoverificación sin ventana (sirve para probar el ejecutable): modelos, detección y, opcionalmente, cámara."""
     import platform
@@ -108,6 +125,7 @@ def verificar(destino: Path, con_camara: bool) -> bool:
     paso("Detector de cuerpo (MediaPipe Pose)", lambda: f"pose en cuadro vacío: {DetectorCuerpo().detectar(cuadro, 0).pose is not None}")
     paso("Clasificador de palabras", lambda: f"{len(ClasificadorPalabras().palabras)} expresiones")
     paso("Historial (SQLite)", lambda: f"{len(RepositorioHistorial().listar_sesiones())} sesiones guardadas")
+    paso("Datos para entrenar (Entrenar)", _datos_para_entrenar)
     if con_camara:
         def camara():
             c = CapturaVideo()
@@ -124,6 +142,31 @@ def verificar(destino: Path, con_camara: bool) -> bool:
     return ok
 
 
+def entrenar_sin_ventana() -> bool:
+    """Lo mismo que «Entrenar los modelos ahora», sin ventana: el ejecutable no tiene consola, así que el registro
+    va a %LOCALAPPDATA%/SILVA/entrenamiento.txt (desde el código, a data/entrenamiento.txt)."""
+    import contextlib
+    import importlib
+    import traceback
+
+    from silva import config
+
+    registro = config.DIR_DATOS_USUARIO / "entrenamiento.txt"
+    registro.parent.mkdir(parents=True, exist_ok=True)
+    carpeta = str((config.DIR_RECURSOS if config.EMPAQUETADO else config.RAIZ_PROYECTO) / "scripts")
+    sys.path.insert(0, carpeta)
+    with registro.open("w", encoding="utf-8") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+        try:
+            importlib.import_module("entrenar_con_muestras").main(["--rapido"])
+            return True
+        except SystemExit as e:
+            print(e)
+            return e.code in (0, None)
+        except Exception:  # noqa: BLE001 (queda en el registro)
+            traceback.print_exc()
+            return False
+
+
 def main() -> None:
     if "--verificar" in sys.argv:
         from silva import config
@@ -132,6 +175,8 @@ def main() -> None:
         hay_ruta = len(sys.argv) > i + 1 and not sys.argv[i + 1].startswith("--")
         destino = Path(sys.argv[i + 1]) if hay_ruta else config.DIR_DATOS_USUARIO / "verificacion.txt"
         sys.exit(0 if verificar(destino, "--camara" in sys.argv) else 1)
+    if "--entrenar" in sys.argv:  # reentrenar con las muestras grabadas, sin ventana (registro en entrenamiento.txt)
+        sys.exit(0 if entrenar_sin_ventana() else 1)
 
     app = QApplication(sys.argv)  # Qt 6 ya maneja la escala de pantalla de Windows (texto nítido)
     app.setApplicationName("SILVA")

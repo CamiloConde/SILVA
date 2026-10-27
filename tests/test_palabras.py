@@ -101,6 +101,17 @@ def test_segmentador_ignora_gestos_muy_cortos():
         assert seg.agregar(f).terminada is None
 
 
+def test_segmentador_mide_en_segundos_y_no_en_cuadros():
+    """La misma seña de 0,4 s a 30 y a 15 cuadros/s (un teléfono): se detecta igual y dura lo mismo.
+    Contando cuadros, a 15 cuadros/s solo tenía 6 cuadros activos y se descartaba por corta."""
+    for fps in (30, 15):
+        seg = SegmentadorSenas()
+        cuadros = [cuadro(2.0)] * int(0.5 * fps) + [cuadro(0.0)] * int(0.4 * fps) + [cuadro(2.0)] * fps
+        terminadas = [e for i, f in enumerate(cuadros) if (e := seg.agregar(f, i / fps)).terminada is not None]
+        assert len(terminadas) == 1, fps
+        assert terminadas[0].inicio == pytest.approx(0.5 - 2 / 30, abs=1 / fps)
+
+
 def test_segmentador_ignora_cuadros_sin_pose():
     seg = SegmentadorSenas()
     assert seg.agregar(None).terminada is None
@@ -130,12 +141,14 @@ class _SegmentadorGuionado:
     def __init__(self, fines, duracion=5):
         self.fines, self.duracion, self.n = set(fines), duracion, 0
 
-    def agregar(self, f):
+    def agregar(self, f, t):
         from silva.palabras import EstadoSegmentador
         self.n += 1
         grabando = any(fin - self.duracion <= self.n < fin for fin in self.fines)
         termina = self.n in self.fines
-        return EstadoSegmentador(grabando, 0, np.zeros((10, N_CARACTERISTICAS_CUADRO)) if termina else None)
+        # la seña terminada dura 10 cuadros (a 30 cuadros/s)
+        return EstadoSegmentador(grabando, 0, np.zeros((10, N_CARACTERISTICAS_CUADRO)) if termina else None,
+                                 inicio=t - 10 / 30 if termina else None)
 
     def reiniciar(self):
         pass
@@ -340,3 +353,12 @@ def test_encuadre_como_en_los_datos_de_entrenamiento():
     assert "Baja" in guia(0.5, 0.21, y_hombros=0.3, y_nariz=0.05)
     assert "Sube" in guia(0.5, 0.21, y_hombros=0.8, y_nariz=0.6)
     assert evaluar_encuadre(CuadroCuerpo(None, None, None, 16 / 9)) is None
+
+
+def test_al_entrenar_entrega_la_sena_y_no_escribe():
+    """Entrenar (grabar muestras): la seña terminada va en el resultado y no se escribe ni se sugiere nada."""
+    ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.9, 0.0)])
+    ctrl.entrenando = True
+    r = _avanzar(ctrl, reloj, 10)[-1]
+    assert r.sena_terminada is not None and r.prediccion.letra == "Hola"
+    assert ctrl.buffer.texto == "" and ctrl.pendiente is None

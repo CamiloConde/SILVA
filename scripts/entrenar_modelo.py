@@ -24,15 +24,18 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import GroupKFold
 
-from silva import config
+from silva import config, muestras_propias
 
-RUTA_REPORTE = config.RAIZ_PROYECTO / "docs" / "metricas_modelo.md"
+RUTA_REPORTE = config.DIR_INFORMES / "metricas_modelo.md"
 SEMILLA = 42
-NOMBRE_FUENTE = {"externo": "JuanPlazas (1 persona)", "lsc70": "LSC70 (70 personas)"}
+NOMBRE_FUENTE = {"externo": "JuanPlazas (1 persona)", "lsc70": "LSC70 (70 personas)",
+                 "propias": "muestras propias (app)"}
 
 
 def cargar() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     archivos = sorted(config.DIR_LANDMARKS.glob("*.npz"))
+    if muestras_propias.RUTA_LETRAS.exists() and muestras_propias.RUTA_LETRAS not in archivos:
+        archivos.append(muestras_propias.RUTA_LETRAS)  # en el ejecutable, las muestras propias están en la carpeta del usuario
     X, y, g = [], [], []
     for a in archivos:
         d = np.load(a, allow_pickle=True)
@@ -108,12 +111,12 @@ def bloque(titulo: str, r: dict, clases) -> str:
 """
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sin-aumento", action="store_true")
     parser.add_argument("--copias-aumento", type=int, default=3)
     parser.add_argument("--arboles", type=int, default=150)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     rng = np.random.default_rng(SEMILLA)
     copias = 0 if args.sin_aumento else args.copias_aumento
 
@@ -170,9 +173,11 @@ def main() -> None:
         "aumento_copias": copias,
         "sklearn": sklearn.__version__,
     }
-    config.RUTA_MODELO_SENAS.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"modelo": final, "metadatos": metadatos}, config.RUTA_MODELO_SENAS, compress=3)
-    print(f"\nModelo guardado en {config.RUTA_MODELO_SENAS}")
+    destino = config.DIR_MODELOS_PROPIOS / "modelo_senas.pkl"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"modelo": final, "metadatos": metadatos}, destino, compress=3)
+    config.RUTA_MODELO_SENAS = destino
+    print(f"\nModelo guardado en {destino}")
 
     fuentes = ", ".join(f"{NOMBRE_FUENTE.get(k, k)}: {v}" for k, v in metadatos["fuentes"].items())
     RUTA_REPORTE.parent.mkdir(parents=True, exist_ok=True)

@@ -262,3 +262,26 @@ def test_quisiste_decir_completa_la_palabra_deletreada(app):
     ventana.borrar()
     assert ctrl.buffer.texto == "HOLA MUND"
     ventana.close()
+
+
+def test_entrenar_graba_una_letra_sin_escribir_ni_guardar_sesion(app, tmp_path):
+    """Entrenar: «Grabar» enciende la cámara, toma 30 cuadros de la letra quieta y se detiene sola."""
+    from silva.muestras_propias import GrabadorMuestras
+    ventana, ctrl, errores = crear(app)
+    ventana.cambiar_modo(MODO_LETRAS)
+    ventana.ver_entrenar()
+    entrenar = ventana._entrenar
+    entrenar.grabador = GrabadorMuestras(tmp_path)
+    entrenar.persona.setText("Prueba")
+    fila = next(i for i in range(entrenar.lista.count()) if entrenar.lista.item(i).data(0x0100) == "A")
+    entrenar.lista.setCurrentRow(fila)
+    entrenar.btn_grabar.click()
+    assert esperar(app, lambda: entrenar.grabador.total == 1, segundos=10)
+    assert not entrenar.grabando and "Muestra 1 de la A guardada" in entrenar.aviso.text()
+    assert ctrl.buffer.texto == ""  # no escribe mientras se entrena
+    ventana.detener()
+    assert ctrl.historial.listar_sesiones() == []  # grabar muestras no es una sesión
+    entrenar.close()
+    assert not ctrl.entrenando
+    assert errores == []
+    ventana.close()

@@ -29,12 +29,12 @@ from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import GroupKFold
 
-from silva import config
+from silva import config, muestras_propias
 from silva.letras_movimiento import (CUADROS, LETRAS_MOVIMIENTO, a_isotropicas, caracteristicas_secuencia,
                                      remuestrear)
 
 ORIGEN = config.DIR_LANDMARKS / "lsc70_secuencias.npz"
-RUTA_REPORTE = config.RAIZ_PROYECTO / "docs" / "metricas_letras_movimiento.md"
+RUTA_REPORTE = config.DIR_INFORMES / "metricas_letras_movimiento.md"
 SEMILLA = 42
 UMBRALES = (0.3, 0.4, 0.5, 0.6, 0.7)
 RECORRIDO = -2  # índice del recorrido de la muñeca en el vector de caracteristicas_secuencia
@@ -58,6 +58,13 @@ def cargar():
         izquierdas.append(bool(iz[vistos].mean() >= 0.5))
         letras.append(str(letra))
         personas.append(str(persona))
+    if muestras_propias.RUTA_TRAZOS.exists():  # grabadas con la app: ya en coordenadas isotrópicas y en 6 cuadros
+        dp = np.load(muestras_propias.RUTA_TRAZOS)
+        for p, iz, letra, persona in zip(dp["puntos"], dp["izquierda"], dp["letras"], dp["personas"]):
+            secuencias.append(p.astype(np.float32))
+            izquierdas.append(bool(iz))
+            letras.append(str(letra))
+            personas.append(str(persona))
     return secuencias, np.array(izquierdas), np.array(letras), np.array(personas)
 
 
@@ -112,12 +119,12 @@ def nuevo_modelo(arboles: int) -> ExtraTreesClassifier:
                                 class_weight="balanced", min_samples_leaf=2)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--arboles", type=int, default=200)
     parser.add_argument("--copias-aumento", type=int, default=4)
     parser.add_argument("--transiciones", type=int, default=40, help="transiciones de prueba por persona")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     rng = np.random.default_rng(SEMILLA)
 
     secuencias, izquierdas, letras, personas = cargar()
@@ -180,10 +187,14 @@ def main() -> None:
         "exactitud_movimiento": float(exactitud_mov),
         "sklearn": sklearn.__version__,
     }
-    joblib.dump({"modelo": final, "metadatos": metadatos}, config.RUTA_MODELO_LETRAS_MOVIMIENTO, compress=3)
-    print(f"Modelo guardado en {config.RUTA_MODELO_LETRAS_MOVIMIENTO}")
+    destino = config.DIR_MODELOS_PROPIOS / "modelo_letras_movimiento.pkl"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"modelo": final, "metadatos": metadatos}, destino, compress=3)
+    config.RUTA_MODELO_LETRAS_MOVIMIENTO = destino
+    print(f"Modelo guardado en {destino}")
 
     tabla = "\n".join(f"| {u:.1f} | {e:.1%} | {a:.1%} | {t:.1%} | {s:.1%} |" for u, e, a, t, s in filas)
+    RUTA_REPORTE.parent.mkdir(parents=True, exist_ok=True)
     RUTA_REPORTE.write_text(f"""# Métricas del modelo de letras con movimiento
 
 Generado por `scripts/entrenar_letras_movimiento.py` el {metadatos['fecha']}.

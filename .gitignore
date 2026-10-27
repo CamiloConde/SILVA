@@ -14,3 +14,7 @@ data/historial.db
 # Ejecutable (scripts/construir_ejecutable.py)
 build/
 dist/
+
+# Muestras grabadas con la app (Entrenar): son datos de personas, no se versionan
+data/propias/
+data/landmarks/propias_*.npz

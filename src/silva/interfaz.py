@@ -11,16 +11,21 @@ azul para la acción y lo confirmado, ocre para «leyendo seña»; IBM Plex Sans
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import math
+import os
 import subprocess
 import sys
 import threading
 import time
+import traceback
 
 import cv2
 import numpy as np
 from PySide6.QtCore import (
-    QEasingCurve, QPoint, QPropertyAnimation, QRect, QRectF, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal,
+    QEasingCurve, QPoint, QPropertyAnimation, QRect, QRectF, QSettings, QSize, Qt, QThread, QTimer,
+    QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
     QColor, QFont, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QImage, QKeySequence, QPainter,
@@ -28,8 +33,9 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLayout, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QHeaderView, QLabel, QLayout, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressBar,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 from silva import __version__, config
@@ -38,6 +44,7 @@ from silva.captura_video import CamaraNoDisponibleError
 from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, PalabraPendiente, ResultadoCuadro
 from silva.cuerpo import dibujar_cuerpo, evaluar_encuadre
 from silva.detector_manos import dibujar_mano
+from silva.muestras_propias import GrabadorMuestras
 from silva.sugerencias import Sugerencias
 
 # Identidad v2
@@ -622,6 +629,7 @@ class VentanaPrincipal(QWidget):
         self._chips: dict[str, QLabel] = {}
         self._chip_activo: str | None = None
         self._dialogo_historial: QDialog | None = None
+        self._entrenar: VentanaEntrenar | None = None
         self._confirmada_hasta = 0.0  # mientras tanto la barra queda azul: «confirmada y agregada al texto»
         self._ultima_resolucion = ""
         self._sugerencias = Sugerencias()
@@ -707,6 +715,7 @@ class VentanaPrincipal(QWidget):
             self.btn_modo[MODO_PALABRAS].setEnabled(False)
             self.btn_modo[MODO_PALABRAS].setToolTip("Falta modelos/modelo_palabras.pkl")
         fila.addStretch()
+        fila.addWidget(_boton("Entrenar", "cabecera_enlace", self.ver_entrenar))
         fila.addWidget(_boton("Historial", "cabecera_enlace", self.ver_historial))
         fila.addWidget(_boton("Ajustes", "cabecera_enlace", self.ver_ajustes))
         return cab
@@ -981,7 +990,8 @@ class VentanaPrincipal(QWidget):
         with self._candado:
             self.ctrl.detener()  # guarda la sesión y después libera la cámara (Figura 5)
         self._mostrar_inactivo()
-        self.lbl_ultima.setText(f"Sesión #{self.ctrl.sesion_id} guardada en el historial")
+        if self.ctrl.sesion_id is not None:  # al grabar muestras no hay sesión
+            self.lbl_ultima.setText(f"Sesión #{self.ctrl.sesion_id} guardada en el historial")
 
     def _parar_trabajador(self) -> None:
         trabajador, self._trabajador = self._trabajador, None
@@ -1018,6 +1028,8 @@ class VentanaPrincipal(QWidget):
         self.video.poner_grabando(False)
         self._mostrar_pendiente(None, 0.0)
         self._actualizar_texto()
+        if self._entrenar is not None:
+            self._entrenar.refrescar()
 
     def _fundir(self, widget: QWidget, ms: int = 280) -> None:
         """Animación de entrada: el widget aparece con un fundido."""
@@ -1118,7 +1130,7 @@ class VentanaPrincipal(QWidget):
         self._parar_trabajador()
         with self._candado:
             self.ctrl.cerrar()
-        for dialogo in (self._dialogo_historial, self._ajustes):
+        for dialogo in (self._dialogo_historial, self._ajustes, self._entrenar):
             if dialogo is not None:
                 dialogo.close()
         evento.accept()
@@ -1136,6 +1148,8 @@ class VentanaPrincipal(QWidget):
                 self._pintar_palabras(r)
             else:
                 self._pintar_letras(r)
+            if self._entrenar is not None and self._entrenar.isVisible():
+                self._entrenar.cuadro(r)
         finally:
             if self._trabajador is not None:
                 self._trabajador.interfaz_libre.set()
@@ -1323,6 +1337,12 @@ class VentanaPrincipal(QWidget):
     def _mostrar_error(self, titulo: str, mensaje: str) -> None:
         QMessageBox.critical(self, titulo, mensaje)
 
+    def ver_entrenar(self) -> None:
+        if self._entrenar is None:
+            self._entrenar = VentanaEntrenar(self)
+        self._entrenar.show()
+        self._entrenar.raise_()
+
     def ver_ajustes(self) -> None:
         self._ajustes.show()
         self._ajustes.raise_()
@@ -1435,6 +1455,349 @@ class DialogoAjustes(QDialog):
         self.combo_tamano.currentIndexChanged.connect(lambda i: ventana.poner_texto_grande(i == 1))
         v.addWidget(self.combo_tamano)
         v.addStretch()
+
+
+class TrabajadorEntrenamiento(QThread):
+    """Reentrena los modelos en un hilo aparte (scripts/entrenar_con_muestras.py --rapido), dentro de la misma app:
+    así funciona igual desde el código que desde el ejecutable, que no tiene un Python aparte."""
+
+    texto = Signal(str)
+    terminado = Signal(bool, str)
+
+    class _Escritor:
+        def __init__(self, emitir) -> None:
+            self._emitir = emitir
+
+        def write(self, t: str) -> int:
+            if t:
+                self._emitir(t)
+            return len(t)
+
+        def flush(self) -> None:
+            pass
+
+    def run(self) -> None:
+        escritor = self._Escritor(self.texto.emit)
+        try:
+            carpeta = str((config.DIR_RECURSOS if config.EMPAQUETADO else config.RAIZ_PROYECTO) / "scripts")
+            if carpeta not in sys.path:
+                sys.path.insert(0, carpeta)
+            with contextlib.redirect_stdout(escritor), contextlib.redirect_stderr(escritor):
+                importlib.import_module("entrenar_con_muestras").main(["--rapido"])
+            self.terminado.emit(True, "")
+        except SystemExit as e:  # p. ej. «No hay muestras»
+            self.terminado.emit(e.code in (0, None), str(e))
+        except Exception as e:  # noqa: BLE001 (se muestra al usuario)
+            self.texto.emit(traceback.format_exc())
+            self.terminado.emit(False, str(e))
+
+
+CUADROS_TOMA_LETRA = 30  # letra quieta: cuadros por muestra…
+SEGUNDOS_PREPARAR_LETRA = 0.6  # …tras dejar este tiempo para formar la seña
+
+
+class VentanaEntrenar(QDialog):
+    """Entrenar: grabar muestras propias con la cámara y reentrenar los modelos (scripts/entrenar_con_muestras.py).
+
+    Mientras está abierta, el controlador reconoce pero no escribe (ctrl.entrenando) y cada seña o trazo terminado
+    llega a `cuadro`. Solo se guardan los puntos del cuerpo y las manos, nunca la imagen. Las muestras quedan en el
+    mismo formato que las de la app del teléfono, así que el mismo script entrena con todas juntas.
+    """
+
+    def __init__(self, ventana: VentanaPrincipal) -> None:
+        super().__init__(ventana)
+        self.ventana = ventana
+        self.ctrl = ventana.ctrl
+        self.setWindowTitle("Entrenar")
+        self.setStyleSheet(HOJA_ESTILO)
+        self.resize(480, 760)
+        self.grabador = GrabadorMuestras()
+        self.grabando = False
+        self._clave: str | None = None
+        self._entrenamiento: TrabajadorEntrenamiento | None = None
+        self._preferencias = QSettings("SILVA", "SILVA")
+        self._reiniciar_toma()
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(24, 20, 24, 20)
+        v.setSpacing(8)
+        v.addWidget(_etiqueta("Entrenar con sus señas", "titulo"))
+        nota = _etiqueta("Graben cada seña unas 5 veces por persona, con la cámara y en el lugar donde van a usar "
+                         "SILVA. Solo se guardan los puntos del cuerpo y las manos, nunca la imagen.", "tenue")
+        nota.setWordWrap(True)
+        v.addWidget(nota)
+        v.addWidget(_etiqueta("¿Quién graba?", "seccion"))
+        self.persona = QLineEdit(str(self._preferencias.value("persona", "")))
+        self.persona.setPlaceholderText("Nombre o apodo (sirve para medir con personas nuevas)")
+        self.persona.textChanged.connect(lambda t: self._preferencias.setValue("persona", t.strip()))
+        v.addWidget(self.persona)
+        self.lbl_modo = _etiqueta("", "seccion")
+        v.addWidget(self.lbl_modo)
+        self.lista = QListWidget()
+        self.lista.currentItemChanged.connect(self._elegir)
+        v.addWidget(self.lista, 1)
+        self.aviso = _etiqueta("", "tenue")
+        self.aviso.setWordWrap(True)
+        self.aviso.setMinimumHeight(44)
+        v.addWidget(self.aviso)
+        self.barra = QProgressBar()
+        self.barra.setRange(0, CUADROS_TOMA_LETRA)
+        self.barra.setTextVisible(False)
+        self.barra.setFixedHeight(6)
+        self.barra.hide()
+        v.addWidget(self.barra)
+        fila = QHBoxLayout()
+        self.btn_grabar = _boton("Grabar", "primario", self.alternar_grabacion)
+        self.btn_borrar = _boton("Borrar última", "secundario", self.borrar_ultima)
+        fila.addWidget(self.btn_grabar, 1)
+        fila.addWidget(self.btn_borrar, 1)
+        v.addLayout(fila)
+        self.lbl_total = _etiqueta("", "tenue")
+        v.addWidget(self.lbl_total)
+        v.addWidget(_separador())
+        v.addWidget(_etiqueta("Reentrenar los modelos", "seccion"))
+        nota2 = _etiqueta("Con todas las muestras grabadas (también las que lleguen del teléfono) reentrena los tres "
+                          "modelos y mide si los reconoce mejor. Tarda unos minutos; no cierres SILVA mientras tanto.",
+                          "tenue")
+        nota2.setWordWrap(True)
+        v.addWidget(nota2)
+        fila2 = QHBoxLayout()
+        self.btn_entrenar = _boton("Entrenar los modelos ahora", "secundario", self.entrenar_modelos)
+        fila2.addWidget(self.btn_entrenar, 1)
+        fila2.addWidget(_boton("Abrir la carpeta", "plano", self.abrir_carpeta))
+        v.addLayout(fila2)
+        self.btn_originales = _boton("Volver a los modelos originales", "enlace_gris", self.volver_a_los_originales)
+        v.addWidget(self.btn_originales, 0, Qt.AlignLeft)
+        self.registro = QPlainTextEdit()
+        self.registro.setReadOnly(True)
+        self.registro.setStyleSheet("font-family: 'IBM Plex Mono', Consolas; font-size: 9pt;")
+        self.registro.hide()
+        v.addWidget(self.registro, 1)
+        self.refrescar()
+        self._actualizar_modelos_propios()
+
+    # ------------------------------------------------------------- qué se graba
+    def _palabras(self) -> bool:
+        return self.ctrl.modo == MODO_PALABRAS
+
+    def _tipo(self, clave: str) -> str:
+        if self._palabras():
+            return "palabra"
+        return "letra" if clave in config.LETRAS_ESTATICAS else "trazo"
+
+    def _nombre(self, clave: str) -> str:
+        return self.ctrl.clasificador_palabras.nombres.get(clave, clave) if self._palabras() else clave
+
+    def _texto_item(self, clave: str) -> str:
+        n = self.grabador.cuantas(self._tipo(clave), clave)
+        trazo = "  ↝ (se traza)" if self._tipo(clave) == "trazo" else ""
+        return f"{self._nombre(clave)}{trazo}" + (f"   ·   {n} muestras" if n else "")
+
+    def refrescar(self) -> None:
+        """Lista de palabras o letras según el modo de la ventana principal."""
+        self.detener_grabacion()
+        palabras = self._palabras()
+        self.lbl_modo.setText("Palabras (cambia a Deletreo arriba, en la ventana principal)" if palabras
+                              else "Letras (cambia a Palabras arriba, en la ventana principal)")
+        if palabras:
+            clasif = self.ctrl.clasificador_palabras
+            claves = sorted(clasif.palabras, key=lambda k: clasif.nombres.get(k, k)) if clasif else []
+        else:
+            claves = list(config.LETRAS)
+        self.lista.blockSignals(True)
+        self.lista.clear()
+        for clave in claves:
+            item = QListWidgetItem(self._texto_item(clave))
+            item.setData(Qt.UserRole, clave)
+            self.lista.addItem(item)
+        self.lista.blockSignals(False)
+        self._clave = None
+        self.aviso.setText("Elige una palabra para grabarla." if palabras else "Elige una letra para grabarla.")
+        self._actualizar_total()
+
+    def _elegir(self, item: QListWidgetItem | None, _anterior=None) -> None:
+        self.detener_grabacion()
+        self._clave = item.data(Qt.UserRole) if item else None
+        if self._clave is None:
+            return
+        nombre = self._nombre(self._clave)
+        self.aviso.setText({
+            "palabra": f"Toca «Grabar» y haz «{nombre}» varias veces, bajando las manos entre una y otra.",
+            "trazo": f"Toca «Grabar» y traza la {nombre} varias veces; quédate quieto al terminar cada una.",
+            "letra": f"Toca «Grabar» y sostén la {nombre} quieta hasta que se llene la barra.",
+        }[self._tipo(self._clave)])
+
+    def _actualizar_total(self) -> None:
+        self.lbl_total.setText(f"{self.grabador.total} muestras en {self.grabador.carpeta}")
+        self.btn_borrar.setEnabled(not self.grabando)
+        for i in range(self.lista.count()):
+            item = self.lista.item(i)
+            item.setText(self._texto_item(item.data(Qt.UserRole)))
+
+    # ------------------------------------------------------------- grabar
+    def alternar_grabacion(self) -> None:
+        if self.grabando:
+            self.detener_grabacion()
+            return
+        if self._clave is None:
+            self.aviso.setText("Elige primero qué vas a grabar.")
+            return
+        if not self.persona.text().strip():
+            self.aviso.setText("Escribe quién graba (tu nombre o un apodo): sirve para medir si el modelo funciona "
+                               "con personas nuevas.")
+            self.persona.setFocus()
+            return
+        self.grabando = True
+        self._reiniciar_toma()
+        self.btn_grabar.setText("Detener")
+        self.btn_borrar.setEnabled(False)
+        nombre = self._nombre(self._clave)
+        tipo = self._tipo(self._clave)
+        self.barra.setVisible(tipo == "letra")
+        self.aviso.setText({
+            "palabra": f"Grabando: haz «{nombre}» y baja las manos. Repite las veces que quieras.",
+            "trazo": f"Grabando: traza la {nombre} y quédate quieto. Repite las veces que quieras.",
+            "letra": f"Forma la {nombre} dentro del recuadro y sostenla…",
+        }[tipo])
+        if not self.ventana.activo:
+            self.ventana.iniciar()
+
+    def detener_grabacion(self) -> None:
+        self.grabando = False
+        self._reiniciar_toma()
+        if hasattr(self, "btn_grabar"):
+            self.btn_grabar.setText("Grabar")
+            self.btn_borrar.setEnabled(True)
+            self.barra.hide()
+
+    def _reiniciar_toma(self) -> None:
+        self._toma_cuadros: list[np.ndarray] = []
+        self._toma_puntos: list[np.ndarray] = []
+        self._toma_izquierdas = 0
+        self._toma_aciertos = 0
+        self._toma_inicio: float | None = None
+        if hasattr(self, "barra"):
+            self.barra.setValue(0)
+
+    def cuadro(self, r: ResultadoCuadro) -> None:
+        """Cada cuadro de la cámara mientras la ventana está abierta (VentanaPrincipal._pintar)."""
+        clave = self._clave
+        if not self.grabando or clave is None:
+            return
+        persona, nombre, tipo = self.persona.text().strip(), self._nombre(clave), self._tipo(clave)
+        entendio = (f" · el modelo actual entendió «{r.prediccion.letra}» ({r.prediccion.confianza:.0%})"
+                    if r.prediccion else "")
+        if tipo == "palabra" and r.sena_terminada is not None:
+            if not self.grabador.palabra(clave, persona, r.sena_terminada, r.fps):
+                self.aviso.setText("No se guardó: la seña duró 4 segundos sin que se viera el final. Baja las manos "
+                                   "del todo (sobre las piernas o a los lados) al terminar cada seña.")
+                return
+            n = self.grabador.cuantas(tipo, clave)
+            self.aviso.setText(f"Muestra {n} de «{nombre}» guardada{entendio}. Haz la siguiente.")
+        elif tipo == "trazo" and r.trazo is not None:
+            self.grabador.trazo(clave, persona, *r.trazo)
+            n = self.grabador.cuantas(tipo, clave)
+            self.aviso.setText(f"Muestra {n} de la {nombre} guardada{entendio}. Haz la siguiente.")
+        elif tipo == "letra" and r.mano is not None and r.puntos_mano is not None:
+            ahora = time.monotonic()
+            if self._toma_inicio is None:
+                self._toma_inicio = ahora
+            if ahora - self._toma_inicio < SEGUNDOS_PREPARAR_LETRA:  # se deja formar la seña
+                return
+            self._toma_cuadros.append(np.asarray(r.mano.caracteristicas, np.float32))
+            self._toma_puntos.append(r.puntos_mano)
+            self._toma_izquierdas += int(r.mano.es_izquierda)
+            self._toma_aciertos += int(r.prediccion is not None and r.prediccion.letra == clave)
+            n = len(self._toma_cuadros)
+            self.barra.setValue(n)
+            if n < CUADROS_TOMA_LETRA:
+                return
+            self.grabador.letra(clave, persona, self._toma_cuadros, self._toma_puntos, self._toma_izquierdas * 2 > n)
+            acierto = self._toma_aciertos / n
+            total = self.grabador.cuantas(tipo, clave)
+            self.detener_grabacion()
+            self.aviso.setText(f"Muestra {total} de la {nombre} guardada · el modelo actual la reconoció en el "
+                               f"{acierto:.0%} de los cuadros. Toca «Grabar» para otra (mejor moviendo un poco la mano).")
+        else:
+            return
+        self._actualizar_total()
+
+    def borrar_ultima(self) -> None:
+        borrada = self.grabador.borrar_ultima()
+        self.aviso.setText(f"Se borró la última muestra ({borrada[0]} «{borrada[1]}»)." if borrada
+                           else "No hay muestras de esta sesión para borrar.")
+        self._actualizar_total()
+
+    def abrir_carpeta(self) -> None:
+        self.grabador.carpeta.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(self.grabador.carpeta))  # noqa: S606 (Windows)
+
+    # ------------------------------------------------------------- reentrenar
+    def entrenar_modelos(self) -> None:
+        if self._entrenamiento is not None:
+            return
+        if self.grabador.total == 0:
+            self.aviso.setText("Primero graba algunas muestras.")
+            return
+        self.detener_grabacion()
+        if self.ventana.activo:
+            self.ventana.detener()  # entrenar ocupa el procesador: la cámara iría muy lenta
+        self.registro.clear()
+        self.registro.show()
+        self.btn_entrenar.setEnabled(False)
+        self.btn_entrenar.setText("Entrenando… (no cierres SILVA)")
+        self._entrenamiento = TrabajadorEntrenamiento(self)
+        self._entrenamiento.texto.connect(self._agregar_registro)
+        self._entrenamiento.terminado.connect(self._al_terminar_entrenamiento)
+        self._entrenamiento.start()
+
+    def _agregar_registro(self, texto: str) -> None:
+        self.registro.moveCursor(self.registro.textCursor().MoveOperation.End)
+        self.registro.insertPlainText(texto)
+        self.registro.ensureCursorVisible()
+
+    def _al_terminar_entrenamiento(self, ok: bool, detalle: str) -> None:
+        self._entrenamiento.wait()
+        self._entrenamiento = None
+        self.btn_entrenar.setEnabled(True)
+        self.btn_entrenar.setText("Entrenar los modelos ahora")
+        self._actualizar_modelos_propios()
+        if ok:
+            QMessageBox.information(
+                self, "Entrenar",
+                "Listo. Cierra y vuelve a abrir SILVA para usar los modelos nuevos.\n\n"
+                "Para el teléfono quedó un paquete silva_modelo_<fecha>.zip (en Descargas, o en dist si abriste SILVA "
+                "desde el código): pásalo al teléfono e impórtalo en Entrenar → Más… → Importar modelo.")
+        else:
+            QMessageBox.warning(self, "Entrenar", f"El entrenamiento falló: {detalle}\n\nEl detalle está en el registro.")
+
+    def _actualizar_modelos_propios(self) -> None:
+        """En el ejecutable, «Volver a los modelos originales» aparece si hay modelos entrenados aquí."""
+        propios = config.EMPAQUETADO and any(config.DIR_MODELOS_PROPIOS.glob("*.pkl"))
+        self.btn_originales.setVisible(bool(propios))
+
+    def volver_a_los_originales(self) -> None:
+        respuesta = QMessageBox.question(
+            self, "Entrenar", "¿Borrar los modelos entrenados con sus muestras y volver a los que trae SILVA? "
+            "Las muestras grabadas no se borran.")
+        if respuesta != QMessageBox.Yes:
+            return
+        for modelo in config.DIR_MODELOS_PROPIOS.glob("*.pkl"):
+            modelo.unlink()
+        self._actualizar_modelos_propios()
+        QMessageBox.information(self, "Entrenar", "Listo. Cierra y vuelve a abrir SILVA para usar los modelos originales.")
+
+    # ------------------------------------------------------------- abrir y cerrar
+    def showEvent(self, evento) -> None:
+        with self.ventana._candado:
+            self.ctrl.entrenando = True
+        super().showEvent(evento)
+
+    def hideEvent(self, evento) -> None:
+        self.detener_grabacion()
+        with self.ventana._candado:
+            self.ctrl.entrenando = False
+        super().hideEvent(evento)
 
 
 class DialogoRespuesta(QDialog):

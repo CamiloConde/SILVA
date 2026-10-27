@@ -28,13 +28,13 @@ from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import classification_report
 from sklearn.model_selection import GroupKFold
 
-from silva import config
+from silva import config, muestras_propias
 from silva.cuerpo import espejar
 from silva.palabras import OTRA, recortar_activo, vector_secuencia
 
 ORIGEN = config.DIR_LANDMARKS / "lsc54_secuencias.npz"
 ORIGEN_LSC50 = config.DIR_LANDMARKS / "lsc50_secuencias.npz"  # scripts/preparar_lsc50.py (opcional)
-RUTA_REPORTE = config.RAIZ_PROYECTO / "docs" / "metricas_palabras.md"
+RUTA_REPORTE = config.DIR_INFORMES / "metricas_palabras.md"
 SEMILLA = 42
 VOCABULARIO = "Cordialidad"
 EXACTITUD_OBJETIVO = 0.95  # lo que la app escribe sola debe acertar al menos esto (lo dudoso se sugiere)…
@@ -97,7 +97,42 @@ def decidir(proba: np.ndarray, clases: np.ndarray, umbral: float):
     return mejor, conf, escribe, sugiere, top3
 
 
-def main() -> None:
+def cargar_datos(negativas_texto: str = "Colores,Numeros", vocabulario_modo: str = "cortesia",
+                 sin_lsc50: bool = False, sin_propias: bool = False):
+    """LSC-54, LSC50 y las muestras propias de la app: (secuencias, etiquetas, firmantes, categorías, negativas)."""
+    d = np.load(ORIGEN, allow_pickle=True)
+    secuencias = list(d["secuencias"])
+    etiquetas_orig = list(d["etiquetas"].astype(object))
+    firmantes = list(d["firmantes"].astype(str))
+    cat = [_norm_categoria(c) for c in d["categorias"]]
+    vocabulario = set(NOMBRES)  # las 33 de LSC-54
+    if ORIGEN_LSC50.exists() and not sin_lsc50:  # LSC50: 5 personas más, de otro entorno de grabación
+        d50 = np.load(ORIGEN_LSC50, allow_pickle=True)
+        for s50, e50, f50 in zip(d50["secuencias"], d50["etiquetas"], d50["firmantes"]):
+            secuencias.append(s50)
+            etiquetas_orig.append(str(e50))
+            firmantes.append(str(f50))
+            en_vocab = str(e50) in vocabulario or vocabulario_modo == "ampliado"
+            cat.append(VOCABULARIO if en_vocab else "LSC50-otras")
+    if muestras_propias.RUTA_SECUENCIAS.exists() and not sin_propias:  # grabadas con la app (scripts/entrenar_con_muestras.py)
+        dp = np.load(muestras_propias.RUTA_SECUENCIAS, allow_pickle=True)
+        for sp, ep_, fp in zip(dp["secuencias"], dp["etiquetas"], dp["firmantes"]):
+            secuencias.append(sp)
+            etiquetas_orig.append(str(ep_))
+            firmantes.append(str(fp))
+            cat.append(VOCABULARIO)
+    secuencias = np.array(secuencias, dtype=object)
+    etiquetas_orig, firmantes, cat = np.array(etiquetas_orig, dtype=object), np.array(firmantes), np.array(cat)
+    negativas = {_norm_categoria(c.strip()) for c in negativas_texto.split(",") if c.strip()}
+    if (cat == "LSC50-otras").any():
+        negativas.add("LSC50-otras")
+    m = (cat == VOCABULARIO) | np.isin(cat, list(negativas))
+    secuencias, firmantes, cat, etiquetas_orig = secuencias[m], firmantes[m], cat[m], etiquetas_orig[m]
+    etiquetas = np.where(cat == VOCABULARIO, etiquetas_orig, OTRA)
+    return secuencias, etiquetas, firmantes, cat, negativas
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--negativas", default="Colores,Numeros",
                         help="categorías de LSC-54 que se usan como «otra cosa» (vacío = sin rechazo)")
@@ -106,30 +141,11 @@ def main() -> None:
                         help="cortesia: las 33 de LSC-54 (las demás de LSC50 son «otra cosa»); "
                              "ampliado: además las señas de LSC50 que no están en LSC-54")
     parser.add_argument("--sin-lsc50", action="store_true", help="no usar LSC50 aunque esté disponible")
-    args = parser.parse_args()
+    parser.add_argument("--sin-propias", action="store_true", help="no usar las muestras grabadas con la app")
+    args = parser.parse_args(argv)
+    secuencias, etiquetas, firmantes, cat, negativas = cargar_datos(args.negativas, args.vocabulario,
+                                                                    args.sin_lsc50, args.sin_propias)
 
-    d = np.load(ORIGEN, allow_pickle=True)
-    secuencias = list(d["secuencias"])
-    etiquetas_orig = list(d["etiquetas"].astype(object))
-    firmantes = list(d["firmantes"].astype(str))
-    cat = [_norm_categoria(c) for c in d["categorias"]]
-    vocabulario = set(NOMBRES)  # las 33 de LSC-54
-    if ORIGEN_LSC50.exists() and not args.sin_lsc50:  # LSC50: 5 personas más, de otro entorno de grabación
-        d50 = np.load(ORIGEN_LSC50, allow_pickle=True)
-        for s50, e50, f50 in zip(d50["secuencias"], d50["etiquetas"], d50["firmantes"]):
-            secuencias.append(s50)
-            etiquetas_orig.append(str(e50))
-            firmantes.append(str(f50))
-            en_vocab = str(e50) in vocabulario or args.vocabulario == "ampliado"
-            cat.append(VOCABULARIO if en_vocab else "LSC50-otras")
-    secuencias = np.array(secuencias, dtype=object)
-    etiquetas_orig, firmantes, cat = np.array(etiquetas_orig, dtype=object), np.array(firmantes), np.array(cat)
-    negativas = {_norm_categoria(c.strip()) for c in args.negativas.split(",") if c.strip()}
-    if (cat == "LSC50-otras").any():
-        negativas.add("LSC50-otras")
-    m = (cat == VOCABULARIO) | np.isin(cat, list(negativas))
-    secuencias, firmantes, cat, etiquetas_orig = secuencias[m], firmantes[m], cat[m], etiquetas_orig[m]
-    etiquetas = np.where(cat == VOCABULARIO, etiquetas_orig, OTRA)
     es_pos = cat == VOCABULARIO
     n_vocab = len(set(etiquetas[es_pos]))
     print(f"{es_pos.sum()} videos de {n_vocab} señas + {(~es_pos).sum()} de «otra cosa» ({', '.join(sorted(negativas))}), "
@@ -192,6 +208,11 @@ def main() -> None:
     top3_50 = np.array([r in t for r, t in zip(real[de50], top3[de50])]).mean() if de50.any() else float("nan")
     if de50.any():
         print(f"  …solo personas de LSC50 (otro entorno de grabación): mejor {top1_50:.3f} · entre 3: {top3_50:.3f}")
+    depr = pos & np.char.startswith(firmantes_te.astype(str), "P-")
+    top1_pr = (mejor[depr] == real[depr]).mean() if depr.any() else float("nan")
+    if depr.any():
+        print(f"  …solo personas de las muestras propias (sin ver a esa persona): mejor {top1_pr:.3f}")
+    texto_propias = "sin muestras" if np.isnan(top1_pr) else f"{top1_pr:.1%}"
     sug_ruido = (sugiere & ~pos).sum() / max((~pos).sum(), 1)
     print(f"Sugerencias: {sugiere[pos].mean():.0%} de las señas reales (correcta entre las 3: {sug_util:.0%}); "
           f"por ruido: {sug_ruido:.0%}")
@@ -212,6 +233,8 @@ def main() -> None:
         "fecha": datetime.now().isoformat(timespec="seconds"),
         "vocabulario": args.vocabulario,
         "exactitud_lsc50": float(top1_50),
+        "exactitud_propias": float(top1_pr),
+        "muestras_propias": int(np.char.startswith(firmantes.astype(str), "P-").sum()),
         "negativas": sorted(negativas),
         "firmantes": int(len(set(firmantes))),
         "exactitud_firmantes_no_vistos": float(top1),
@@ -219,15 +242,17 @@ def main() -> None:
         "umbral_sugerencia": UMBRAL_SUGERENCIA,
         "sklearn": sklearn.__version__,
     }
-    config.RUTA_MODELO_PALABRAS.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"modelo": final, "nombres": nombres, "metadatos": metadatos}, config.RUTA_MODELO_PALABRAS,
-                compress=3)
-    print(f"Modelo guardado en {config.RUTA_MODELO_PALABRAS} (inferencia {ms:.1f} ms por seña)")
+    destino = config.DIR_MODELOS_PROPIOS / "modelo_palabras.pkl"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"modelo": final, "nombres": nombres, "metadatos": metadatos}, destino, compress=3)
+    config.RUTA_MODELO_PALABRAS = destino
+    print(f"Modelo guardado en {destino} (inferencia {ms:.1f} ms por seña)")
 
     tabla = "\n".join(f"| {c['u']:.2f} | {c['cobertura']:.1%} | {c['exactitud']:.1%} | {c['falsas']:.1%} |"
                       for c in curva)
     reporte = classification_report([nombres[c] for c in real[pos]], [nombres[c] for c in mejor[pos]],
                                     digits=3, zero_division=0)
+    RUTA_REPORTE.parent.mkdir(parents=True, exist_ok=True)
     RUTA_REPORTE.write_text(f"""# Métricas del modelo de palabras (LSC-54)
 
 Generado por `scripts/entrenar_palabras.py` el {metadatos['fecha']}.
@@ -248,6 +273,7 @@ Generado por `scripts/entrenar_palabras.py` el {metadatos['fecha']}.
 |---|---|
 | Exactitud (mejor de las {n_vocab} opciones) | {top1:.1%} |
 | …solo con las personas de LSC50 (otro entorno de grabación) | {top1_50:.1%} (entre las 3 primeras: {top3_50:.1%}) |
+| …solo con las personas de las muestras propias (grabadas con la app) | {texto_propias} |
 | La seña correcta está entre las 3 primeras opciones | {top3_ok:.1%} |
 | Umbral de confianza elegido | {umbral:.2f} |
 | Señas reales que la app escribe sola | {elegido['cobertura']:.1%} |

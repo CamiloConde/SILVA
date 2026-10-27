@@ -17,14 +17,19 @@ Además escribe movil/app/src/test/resources/casos.json con entradas reales y lo
 
 Uso:
     python scripts/exportar_movil.py
+    python scripts/exportar_movil.py --paquete dist/silva_modelo.zip   (solo el paquete para «Importar modelo»)
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import struct
 import sys
+import tempfile
+import zipfile
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -76,7 +81,44 @@ def lista(a, decimales=7):
     return np.round(np.asarray(a, np.float64), decimales).tolist()
 
 
+def exportar_paquete(destino: Path, origen: str) -> None:
+    """Los tres clasificadores y su índice en un .zip, para «Entrenar → Importar modelo» en el teléfono."""
+    letras = joblib.load(config.RUTA_MODELO_SENAS)["modelo"]
+    movimiento = joblib.load(config.RUTA_MODELO_LETRAS_MOVIMIENTO)["modelo"]
+    paquete_palabras = joblib.load(config.RUTA_MODELO_PALABRAS)
+    metadatos_palabras = paquete_palabras.get("metadatos", {})
+    with tempfile.TemporaryDirectory() as tmp:
+        carpeta = Path(tmp)
+        escribir_bosque(letras, carpeta / "letras.bin")
+        escribir_bosque(movimiento, carpeta / "letras_movimiento.bin")
+        escribir_bosque(paquete_palabras["modelo"], carpeta / "palabras.bin")
+        indice = {
+            "origen": origen,
+            "letras": {"clases": [str(c) for c in letras.classes_]},
+            "letras_movimiento": {"clases": [str(c) for c in movimiento.classes_]},
+            "palabras": {
+                "clases": [str(c) for c in paquete_palabras["modelo"].classes_],
+                "nombres": paquete_palabras.get("nombres", {}),
+                "umbral": float(metadatos_palabras.get("umbral", 0.5)),
+                "umbral_sugerencia": float(metadatos_palabras.get("umbral_sugerencia", 0.12)),
+            },
+        }
+        (carpeta / "modelos.json").write_text(json.dumps(indice, ensure_ascii=False, indent=1), encoding="utf-8")
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
+            for nombre in ("letras.bin", "letras_movimiento.bin", "palabras.bin", "modelos.json"):
+                z.write(carpeta / nombre, nombre)
+    print(f"Paquete para el teléfono: {destino} ({destino.stat().st_size / 1e6:.1f} MB)")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--paquete", type=Path, help="solo crear este .zip para importarlo en el teléfono")
+    parser.add_argument("--origen", default="modelo propio", help="descripción que muestra el teléfono")
+    args = parser.parse_args()
+    if args.paquete:
+        exportar_paquete(args.paquete, args.origen)
+        return
     (ASSETS / "modelos").mkdir(parents=True, exist_ok=True)
     CASOS.parent.mkdir(parents=True, exist_ok=True)
 

@@ -24,12 +24,23 @@ RUTA_MARCA = DIR_RECURSOS / "recursos" / "silva_marca.png"  # S sola (tinta y az
 DIR_FUENTES = DIR_RECURSOS / "recursos" / "fuentes"  # IBM Plex Sans y Mono (OFL)
 RUTA_PALABRAS_ES = DIR_RECURSOS / "recursos" / "palabras_es.txt"  # «¿Quisiste decir?» del deletreo
 RUTA_MODELO_MANOS = DIR_MODELOS / "hand_landmarker.task"  # MediaPipe Hand Landmarker
-RUTA_MODELO_SENAS = DIR_MODELOS / "modelo_senas.pkl"  # clasificador de letras
+# Modelos reentrenados con muestras propias (Entrenar). Desde el código se reentrena modelos/ directamente; en el
+# ejecutable van a la carpeta del usuario y, si existen, se usan en lugar de los que trae el programa.
+DIR_MODELOS_PROPIOS = DIR_DATOS_USUARIO / "modelos" if EMPAQUETADO else DIR_MODELOS
+
+
+def _modelo(nombre: str) -> Path:
+    propio = DIR_MODELOS_PROPIOS / nombre
+    return propio if propio.exists() else DIR_MODELOS / nombre
+
+
+RUTA_MODELO_SENAS = _modelo("modelo_senas.pkl")  # clasificador de letras
 RUTA_MODELO_POSE = DIR_MODELOS / "pose_landmarker_lite.task"  # MediaPipe Pose Landmarker
-RUTA_MODELO_PALABRAS = DIR_MODELOS / "modelo_palabras.pkl"  # clasificador de palabras
-RUTA_MODELO_LETRAS_MOVIMIENTO = DIR_MODELOS / "modelo_letras_movimiento.pkl"  # G H J Ñ Q S Z
+RUTA_MODELO_PALABRAS = _modelo("modelo_palabras.pkl")  # clasificador de palabras
+RUTA_MODELO_LETRAS_MOVIMIENTO = _modelo("modelo_letras_movimiento.pkl")  # G H J Ñ Q S Z
 RUTA_ANIMACIONES =DIR_MODELOS / "animaciones_senas.npz"  # palabras a señas (scripts/generar_animaciones.py)
-DIR_LANDMARKS = RAIZ_PROYECTO / "data" / "landmarks"
+DIR_LANDMARKS = (DIR_RECURSOS if EMPAQUETADO else RAIZ_PROYECTO) / "data" / "landmarks"  # el ejecutable los trae para entrenar
+DIR_INFORMES = DIR_DATOS_USUARIO / "informes" if EMPAQUETADO else RAIZ_PROYECTO / "docs"  # métricas de cada entrenamiento
 RUTA_HISTORIAL = DIR_DATOS_USUARIO / "historial.db"
 
 # Formato de los landmarks

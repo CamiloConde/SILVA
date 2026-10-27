@@ -17,7 +17,7 @@ from silva.cuerpo import CuadroCuerpo, DetectorCuerpo, caracteristicas_cuadro
 from silva.detector_manos import DetectorManos
 from silva.letras_movimiento import LETRAS_MOVIMIENTO, ClasificadorMovimiento, SegmentadorLetras, a_isotropicas
 from silva.modelo import Mano, Prediccion
-from silva.palabras import MAX_CUADROS, ClasificadorPalabras, SegmentadorSenas
+from silva.palabras import SEGUNDOS_MAX, ClasificadorPalabras, SegmentadorSenas
 from silva.repositorio_historial import RepositorioHistorial
 
 MODO_LETRAS = "letras"
@@ -30,7 +30,9 @@ MODO_PALABRAS = "palabras"
 RESOLUCION = {MODO_LETRAS: (640, 480), MODO_PALABRAS: (640, 360)}
 # Si la misma palabra sale dos veces casi seguidas, es casi siempre una seña partida
 # en dos (la mano se perdió un instante), no una repetición: se escribe una sola vez.
-CUADROS_REPETICION = 20
+# Es la pausa entre la palabra escrita y el comienzo de la siguiente seña (antes, 20 cuadros a 30 cuadros/s
+# contando el reposo final de la seña, que son 8 cuadros: queda 12 cuadros = 0,4 s).
+SEGUNDOS_REPETICION = 0.4
 SEGUNDOS_CORRECCION = 3.0  # tras escribir una palabra, durante este tiempo se puede cambiar (1-3) o borrar (X)
 SEGUNDOS_SUGERENCIA = 6.0  # un «¿Quiso decir…?» desaparece sin escribir nada tras este tiempo
 
@@ -69,6 +71,10 @@ class ResultadoCuadro:
     ahora: float = 0.0
     brillo: float = 128.0  # brillo medio de la imagen (0-255): con poca luz se pierde el seguimiento
     trazando: bool = False  # modo Deletreo: la mano está trazando una letra con movimiento
+    # al entrenar (grabar muestras): lo que se guarda
+    sena_terminada: np.ndarray | None = None  # Palabras: la seña completa (100 valores por cuadro)
+    puntos_mano: np.ndarray | None = None  # Deletreo: la mano en coordenadas isotrópicas
+    trazo: tuple | None = None  # Deletreo: (puntos, izquierda) de un trazo terminado
 
     @property
     def mano_detectada(self) -> bool:
@@ -110,8 +116,11 @@ class ControladorSILVA:
         self._t_estatica: float | None = None  # cuándo se escribió la última letra estática
         self._t_inicio_trazo: float | None = None
         self.pendiente: PalabraPendiente | None = None
+        # Al entrenar (grabar muestras propias) se reconoce igual, para mostrar qué entiende el modelo,
+        # pero no se escribe nada ni se guarda una sesión: cada seña o trazo terminado va en el resultado.
+        self.entrenando = False
         self._ultima_palabra: str | None = None
-        self._cuadros_desde_palabra = 0
+        self._t_palabra = float("-inf")  # cuándo se escribió (o sugirió) la última palabra
         self.modo = MODO_LETRAS
         self.activo = False
         self.sesion_id: int | None = None
@@ -154,7 +163,7 @@ class ControladorSILVA:
         self._t_estatica = None
         self.pendiente = None
         self.ultima_confianza = None
-        self.sesion_id = self.historial.iniciar_sesion()
+        self.sesion_id = None if self.entrenando else self.historial.iniciar_sesion()
         self._t_anterior = None
         self.activo = True
 
@@ -171,6 +180,8 @@ class ControladorSILVA:
 
         mano = self.detector.detectar(cuadro, marca_ms)
         prediccion = self.clasificador.predecir(mano.caracteristicas) if mano else None
+        if self.entrenando:
+            return self._letras_al_entrenar(cuadro, mano, prediccion)
 
         trazo = self._seguir_trazo(mano, cuadro, prediccion)
         if trazo is not None:  # letra con movimiento
@@ -197,6 +208,18 @@ class ControladorSILVA:
             brillo=_brillo(cuadro),
             trazando=self.segmentador_letras.moviendo,
         )
+
+    def _letras_al_entrenar(self, cuadro: np.ndarray, mano: Mano | None, prediccion: Prediccion | None) -> ResultadoCuadro:
+        alto, ancho = cuadro.shape[:2]
+        puntos = None
+        if mano is not None:
+            puntos = a_isotropicas(np.array([(l.x, l.y) for l in mano.landmarks], np.float32), ancho, alto)
+        estado = self.segmentador_letras.agregar(puntos, mano.es_izquierda if mano else False)
+        if estado.terminado is not None and self.clasificador_movimiento is not None:
+            prediccion = self.clasificador_movimiento.predecir(*estado.terminado)
+        return ResultadoCuadro(cuadro=cuadro, mano=mano, prediccion=prediccion, letra_confirmada=None,
+                               texto=self.buffer.texto, progreso=0.0, fps=self._medir_fps(), brillo=_brillo(cuadro),
+                               trazando=self.segmentador_letras.moviendo, puntos_mano=puntos, trazo=estado.terminado)
 
     def _seguir_trazo(self, mano: Mano | None, cuadro: np.ndarray, estatica: Prediccion | None) -> Prediccion | None:
         """Letras con movimiento: sigue la mano y, al terminar un trazo, lo clasifica.
@@ -231,8 +254,15 @@ class ControladorSILVA:
     def _procesar_palabras(self, cuadro: np.ndarray, marca_ms: int) -> ResultadoCuadro:
         ahora = self._reloj()
         cuerpo = self.detector_cuerpo.detectar(cuadro, marca_ms)
-        estado = self.segmentador.agregar(caracteristicas_cuadro(cuerpo))
-        self._cuadros_desde_palabra += 1
+        estado = self.segmentador.agregar(caracteristicas_cuadro(cuerpo), ahora)
+        if self.entrenando:
+            terminada = estado.terminada
+            return ResultadoCuadro(
+                cuadro=cuadro, mano=None,
+                prediccion=self.clasificador_palabras.evaluar(terminada).mejor if terminada is not None else None,
+                letra_confirmada=None, texto=self.buffer.texto, progreso=min(estado.segundos / SEGUNDOS_MAX, 1.0),
+                fps=self._medir_fps(), cuerpo=cuerpo, grabando_sena=estado.grabando, ahora=ahora,
+                brillo=_brillo(cuadro), sena_terminada=terminada)
         confirmada = None
 
         # La pendiente se resuelve al vencer su plazo o cuando empieza una seña nueva
@@ -244,8 +274,8 @@ class ControladorSILVA:
         if estado.terminada is not None:
             evaluacion = self.clasificador_palabras.evaluar(estado.terminada)
             prediccion = evaluacion.mejor
-            repetida = (prediccion.letra == self._ultima_palabra
-                        and self._cuadros_desde_palabra - len(estado.terminada) < CUADROS_REPETICION)
+            repetida = (prediccion.letra == self._ultima_palabra and estado.inicio is not None
+                        and estado.inicio - self._t_palabra < SEGUNDOS_REPETICION)
             segura = prediccion.confianza >= self.umbral_palabras and prediccion.confianza >= evaluacion.prob_otra
             dudosa = (prediccion.confianza >= self.umbral_sugerencia
                       and prediccion.confianza >= 0.5 * evaluacion.prob_otra)
@@ -258,7 +288,7 @@ class ControladorSILVA:
                 plazo = SEGUNDOS_CORRECCION if segura else SEGUNDOS_SUGERENCIA
                 self.pendiente = PalabraPendiente(tuple(evaluacion.opciones[:3]), segura, ahora, ahora + plazo)
                 self._ultima_palabra = prediccion.letra
-                self._cuadros_desde_palabra = 0
+                self._t_palabra = ahora
 
         return ResultadoCuadro(
             cuadro=cuadro,
@@ -266,7 +296,7 @@ class ControladorSILVA:
             prediccion=prediccion,
             letra_confirmada=confirmada,
             texto=self.buffer.texto,
-            progreso=min(estado.cuadros / MAX_CUADROS, 1.0),
+            progreso=min(estado.segundos / SEGUNDOS_MAX, 1.0),
             fps=self._medir_fps(),
             cuerpo=cuerpo,
             grabando_sena=estado.grabando,
@@ -315,14 +345,16 @@ class ControladorSILVA:
             return
         self._cerrar_pendiente()
         self.activo = False
-        self.historial.guardar_sesion(self.sesion_id, self.buffer.texto)
+        if self.sesion_id is not None:
+            self.historial.guardar_sesion(self.sesion_id, self.buffer.texto)
         self.captura.liberar()
 
     def cerrar(self) -> None:
         """Cierre de la aplicación: detener, cerrar historial y liberar recursos."""
         if self.activo:
             self._cerrar_pendiente()
-            self.historial.guardar_sesion(self.sesion_id, self.buffer.texto)
+            if self.sesion_id is not None:
+                self.historial.guardar_sesion(self.sesion_id, self.buffer.texto)
             self.activo = False
         self.historial.cerrar()
         self.captura.liberar()
