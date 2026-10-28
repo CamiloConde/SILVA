@@ -6,7 +6,8 @@ SILVA traduce a texto, en tiempo real, señas de la Lengua de Señas Colombiana 
 
 Equipo 3, Ingeniería de Software (grupo 1206), Universidad Tecnológica de Bolívar: Miguel Alejandro Jácome Yánez, Camilo Andrés Conde Corrales y Juan Diego Rosales Guillén. Docente: Aisner José Marrugo Juliao.
 
-![SILVA en modo Palabras](docs/capturas/figura_4_palabras.png)
+<img width="1597" height="1026" alt="image" src="https://github.com/user-attachments/assets/7da233f2-c712-4be9-8bc3-01caddea8a26" />
+
 
 ## Descargar y usar (sin instalar nada)
 
