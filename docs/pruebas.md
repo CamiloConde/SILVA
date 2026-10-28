@@ -187,3 +187,17 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-90 | Precisión | Muestras propias grabadas sentado | Menos señas cortadas a los 4 s | 50 → 56 % cortadas a tiempo (las muestras miden mal el cambio) | Parcial |
 | PR-91 | Funcional (manual) | Usar SILVA sentado con las manos sobre la mesa entre señas, en el PC y en el teléfono | Cada palabra se escribe al bajar las manos, sin esperar 4 s | | Pendiente |
 
+
+## Versión 1.5.0: correcciones de la prueba con usuarios del 27/10/2026
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-92 | Precisión (`entrenar_palabras.py`) | Manos en reposo o quietas (sentado, sobre la mesa), personas no vistas | El modelo no escribe palabras («Por favor» salía sola) | El modelo nunca había visto tramos sin seña: 13,5 % de palabras falsas. Entrenado con el reposo de cada video y posturas quietas con las manos bajas como «otra cosa»: 0,0 %. Exactitud 84,4 % (antes 85,3 %); escribe sola el 50 % de las señas (antes 56 %) con 95,1 % de acierto; palabras falsas ante movimientos ajenos 3,6 % (antes 12,5 %) | Aprobada |
+| PR-93 | Unitaria (`test_palabras.py`) | Corregir una palabra (elegir otra opción) o borrar una que se escribió sola | Se guarda como muestra para entrenar: con la palabra elegida, o como «otra cosa» | Correcto; plazo para corregir 8 s (antes 3 s) y para elegir una sugerencia 10 s (antes 6 s), en el PC y el teléfono | Aprobada |
+| PR-94 | Funcional (emulador, 360 dp, navegación con 3 botones, letra 1,3×) | Barra de abajo del teléfono | Visible y sin cortar palabras | Antes se ocultaba en teléfonos que informan el teclado como abierto. Ahora se ve siempre; con letra grande del sistema, la barra la limita a 1,15× y «Conversar» ya no se parte | Aprobada |
+| PR-95 | Funcional (teléfono) | Corregir una palabra en el celular | Botones táctiles | La tarjeta muestra las opciones como botones grandes y «Borrar» / «No era ninguna» | Aprobada |
+| PR-96 | Funcional (PC) | Elegir cámara | Lista desplegable con las cámaras conectadas por su nombre | «Brio 300», «Camera (NVIDIA Broadcast)», «OBS Virtual Camera» (DirectShow, mismo orden que OpenCV); la lista se actualiza al abrirla y cambiar con la cámara encendida la reinicia | Aprobada |
+| PR-97 | Unitaria (Python y Kotlin) | Trazo de una letra con la mano perdida ~0,1 s a mitad del movimiento | Un solo trazo completo | Antes se partía en dos. Ahora se toleran 0,3 s sin mano; el trazo de las letras se mide en segundos (el teléfono va a ~19 cuadros/s) | Aprobada |
+| PR-98 | Configuración | Mano rápida | MediaPipe la pierde menos | Seguimiento 0,6 → 0,4 en Deletreo; se piden 30 cuadros/s a la cámara (PC y teléfono) para que no baje a 15 con poca luz y la mano no salga borrosa | Parcial (falta medir con cámara real) |
+| PR-99 | Datos (`generar_animaciones.py`) | Guías de las letras con trazo | Movimiento claro y fluido | Se elige un recorrido amplio con la mano de tamaño parejo; se suaviza el temblor; la Z se dibuja con su forma (LSC70 no muestra sus esquinas); interpolación Catmull-Rom; todas las guías en vista de espejo, como la cámara de la app (la J y la Z se veían al revés) | Aprobada |
+| PR-100 | Funcional (manual) | Repetir la prueba con usuarios en el PC y en el teléfono | «Por favor» no aparece sola; Z, H, J y Ñ se escriben | | Pendiente |
