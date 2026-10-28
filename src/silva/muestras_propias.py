@@ -33,7 +33,7 @@ import numpy as np
 
 from silva import config
 from silva.letras_movimiento import CUADROS, remuestrear
-from silva.palabras import SEGUNDOS_MAX
+from silva.palabras import OTRA, SEGUNDOS_MAX
 
 FORMATO = "silva-muestras"
 # Desde el código, todo queda en el proyecto (data/propias y data/landmarks); en el ejecutable, en la carpeta del
@@ -91,7 +91,7 @@ def reunir(muestras: list[dict], vocabulario: set[str]) -> dict:
             continue
         vistas.add(firma)
         toma = f"{persona}/{len(vistas)}"
-        if tipo == "palabra" and clave in vocabulario:
+        if tipo == "palabra" and (clave in vocabulario or clave == OTRA):
             cuadros = np.asarray(m["cuadros"], np.float32)
             if cuadros.ndim != 2 or cuadros.shape[1] != 100:
                 omitidas.append((tipo, clave, "forma inválida"))

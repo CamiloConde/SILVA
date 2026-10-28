@@ -235,7 +235,7 @@ def test_sena_segura_se_escribe_apenas_se_reconoce():
     r = _avanzar(ctrl, reloj, 10)[-1]
     assert r.letra_confirmada == "Hola" and ctrl.buffer.texto == "Hola"  # sin esperar
     assert r.pendiente.automatica and r.pendiente.opciones[0].letra == "Hola"  # pero se puede corregir
-    _avanzar(ctrl, reloj, 100)  # pasado el plazo de corrección
+    _avanzar(ctrl, reloj, 270)  # pasado el plazo de corrección (8 s)
     assert ctrl.buffer.texto == "Hola" and ctrl.pendiente is None
     assert [l for l, _ in ctrl.historial.letras_de_sesion(ctrl.sesion_id)] == ["Hola"]
 
@@ -250,14 +250,14 @@ def test_movimiento_ajeno_no_escribe_nada():
 
 
 def test_sena_dudosa_es_sugerencia_y_solo_se_escribe_si_se_elige():
-    ctrl, reloj = _controlador(fines=[10, 300], salidas=[("Gracias", 0.18, 0.2), ("Gracias", 0.18, 0.2)])
+    ctrl, reloj = _controlador(fines=[10, 360], salidas=[("Gracias", 0.18, 0.2), ("Gracias", 0.18, 0.2)])
     r = _avanzar(ctrl, reloj, 10)[-1]
     assert r.pendiente is not None and not r.pendiente.automatica
-    _avanzar(ctrl, reloj, 240)  # vence sin que nadie elija
+    _avanzar(ctrl, reloj, 310)  # vence sin que nadie elija (10 s)
     assert ctrl.buffer.texto == "" and ctrl.pendiente is None
     _avanzar(ctrl, reloj, 50)  # segunda vez: alguien elige la opción 2
     assert ctrl.confirmar_pendiente(1) == "Chao"
-    assert ctrl.buffer.texto == "Chao"
+    assert ctrl.buffer.texto.strip() == "Chao"
 
 
 def test_cambiar_y_borrar_la_palabra_escrita():
@@ -385,3 +385,18 @@ def test_al_entrenar_entrega_la_sena_y_no_escribe():
     r = _avanzar(ctrl, reloj, 10)[-1]
     assert r.sena_terminada is not None and r.prediccion.letra == "Hola"
     assert ctrl.buffer.texto == "" and ctrl.pendiente is None
+
+
+def test_las_correcciones_se_guardan_para_entrenar():
+    """Cambiar la palabra por otra opción la guarda con esa palabra; borrarla, como «otra cosa»."""
+    from silva.palabras import OTRA
+    ctrl, reloj = _controlador(fines=[10, 40], salidas=[("Hola", 0.9, 0.0), ("No", 0.8, 0.0)])
+    guardadas = []
+    ctrl.al_corregir = lambda clave, cuadros, fps: guardadas.append((clave, len(cuadros)))
+    _avanzar(ctrl, reloj, 10)
+    ctrl.confirmar_pendiente(1)  # no era «Hola», era «Chao»
+    _avanzar(ctrl, reloj, 30)
+    ctrl.descartar_pendiente()  # «No» se escribió sin que se hiciera esa seña
+    assert guardadas == [("Chao", 10), (OTRA, 10)]
+    assert ctrl.buffer.texto.strip() == "Chao"
+

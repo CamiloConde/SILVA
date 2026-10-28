@@ -52,6 +52,7 @@ class Estado(private val context: Context, val modelos: Modelos, aceleracion: Ac
     private var sesion = -1L
     private var confirmadaHasta = 0.0
     private val horaCorta = SimpleDateFormat("HH:mm", Locale.US)
+    private val principal = android.os.Handler(android.os.Looper.getMainLooper())
 
     var pantalla by mutableStateOf(Pantalla.TRADUCIR); private set
     var activo by mutableStateOf(false); private set
@@ -79,6 +80,14 @@ class Estado(private val context: Context, val modelos: Modelos, aceleracion: Ac
 
     init {
         motor.alEscribir = { palabra, confianza -> if (sesion >= 0) historial.registrar(sesion, palabra, confianza) }
+        // las correcciones de palabras se guardan como muestras para entrenar, junto a las de Entrenar
+        motor.alCorregir = { clave, cuadros, fps ->
+            principal.post {
+                muestras.agregarPalabra(clave, persona.trim(), cuadros, fps)
+                actualizarConteo()
+                estadoTexto = "Corrección guardada para entrenar"
+            }
+        }
     }
 
     // ------------------------------------------------------------------ navegación

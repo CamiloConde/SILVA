@@ -126,7 +126,7 @@
    "Si": "Sí",
    "Tranquilo": "Tranquilo"
   },
-  "umbral": 0.2,
+  "umbral": 0.15,
   "umbral_sugerencia": 0.12
  },
  "animaciones": [

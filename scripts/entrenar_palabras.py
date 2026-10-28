@@ -30,7 +30,7 @@ from sklearn.model_selection import GroupKFold
 
 from silva import config, muestras_propias
 from silva.cuerpo import espejar
-from silva.palabras import OTRA, recortar_activo, vector_secuencia
+from silva.palabras import OTRA, actividad, recortar_activo, vector_secuencia
 
 ORIGEN = config.DIR_LANDMARKS / "lsc54_secuencias.npz"
 ORIGEN_LSC50 = config.DIR_LANDMARKS / "lsc50_secuencias.npz"  # scripts/preparar_lsc50.py (opcional)
@@ -41,6 +41,44 @@ EXACTITUD_OBJETIVO = 0.95  # lo que la app escribe sola debe acertar al menos es
 FALSAS_MAXIMO = 0.15  # …y escribir (de forma provisional) a lo sumo esta fracción de movimientos ajenos
 UMBRAL_SUGERENCIA = 0.12  # por debajo del umbral pero por encima de esto: «¿Quiso decir…?»
 MARGEN_SUGERENCIA = 0.5  # para sugerir, la seña debe tener al menos la mitad de la probabilidad de «otra cosa»
+# «Otra cosa» que se usa siempre al entrenar (no es una de las categorías que se rotan para medir palabras falsas)
+SIEMPRE_OTRA = ("Reposo", "Propias-otras")
+
+
+def tramos_sin_sena(secuencias, firmantes, rng) -> tuple[list, list]:
+    """Tramos en los que la persona no seña, como «otra cosa». Sin ellos el modelo nunca vio unas manos quietas
+    y las tomaba por la seña más parecida: ante el reposo de LSC-54 elegía «Por favor» en 166 de 171 tramos, y en
+    vivo la escribía sin que nadie hiciera nada.
+    - el reposo del principio y del final de cada video;
+    - una postura con las manos bajas sostenida, con el temblor de las manos (como sentado, sobre la mesa);
+    - pequeños movimientos que no son una seña (acomodarse)."""
+    tramos, de_quien = [], []
+    for s, f in zip(secuencias, firmantes):
+        s = np.asarray(s, np.float32)
+        act = actividad(s)
+        if not act.any():
+            continue
+        activos = np.flatnonzero(act)
+        reposos = [r for r in (s[:activos[0]], s[activos[-1] + 1:]) if len(r) >= 12]
+        if reposos:  # uno por video, para no llenar el entrenamiento de reposo
+            tramos.append(reposos[int(rng.integers(len(reposos)))])
+            de_quien.append(f)
+        # postura sostenida solo con las manos bajas (como sobre la mesa, sentado): una pose alta congelada se
+        # parece a una seña que se sostiene, y el modelo dejaba de escribir señas reales
+        bajas = activos[(s[activos, 11] > 0.3) & (s[activos, 13] > 0.3)]
+        if rng.random() > 0.35 or len(bajas) == 0:
+            continue
+        base = s[rng.choice(bajas)]
+        n = int(rng.integers(20, 41))
+        q = np.repeat(base[None], n, 0) + rng.normal(0, 0.01, (n, base.size)).astype(np.float32)
+        if rng.random() < 0.5:  # un movimiento pequeño, lento, de todo el cuerpo y las manos
+            amplitud = rng.uniform(0.03, 0.08)
+            q[:, ::2] += (amplitud * np.sin(np.linspace(0, rng.uniform(1, 3) * np.pi, n)))[:, None].astype(np.float32)
+        for i in (14 + 42, 57 + 42):  # la presencia de cada mano no cambia
+            q[:, i] = base[i]
+        tramos.append(q)
+        de_quien.append(f)
+    return tramos, de_quien
 
 # Nombre para mostrar de cada carpeta del dataset
 NOMBRES = {
@@ -73,6 +111,8 @@ def construir(secuencias, etiquetas, firmantes, con_espejo: bool):
     X, y, g, descartadas = [], [], [], 0
     for s, e, f in zip(secuencias, etiquetas, firmantes):
         tramo = recortar_activo(s)
+        if tramo is None and e == OTRA and len(s) >= 6:
+            tramo = np.asarray(s, np.float32)  # un tramo sin seña (reposo) se usa entero
         if tramo is None:
             descartadas += 1
             continue
@@ -98,7 +138,7 @@ def decidir(proba: np.ndarray, clases: np.ndarray, umbral: float):
 
 
 def cargar_datos(negativas_texto: str = "Colores,Numeros", vocabulario_modo: str = "cortesia",
-                 sin_lsc50: bool = False, sin_propias: bool = False):
+                 sin_lsc50: bool = False, sin_propias: bool = False, con_reposo: bool = True):
     """LSC-54, LSC50 y las muestras propias de la app: (secuencias, etiquetas, firmantes, categorías, negativas)."""
     d = np.load(ORIGEN, allow_pickle=True)
     secuencias = list(d["secuencias"])
@@ -120,13 +160,20 @@ def cargar_datos(negativas_texto: str = "Colores,Numeros", vocabulario_modo: str
             secuencias.append(sp)
             etiquetas_orig.append(str(ep_))
             firmantes.append(str(fp))
-            cat.append(VOCABULARIO)
+            # una palabra escrita que la persona borró (corrección) es «otra cosa»
+            cat.append("Propias-otras" if str(ep_) == OTRA else VOCABULARIO)
+    if con_reposo:
+        tramos, de_quien = tramos_sin_sena(secuencias, firmantes, np.random.default_rng(SEMILLA))
+        secuencias += tramos
+        etiquetas_orig += [OTRA] * len(tramos)
+        firmantes += de_quien
+        cat += ["Reposo"] * len(tramos)
     secuencias = np.array(secuencias, dtype=object)
     etiquetas_orig, firmantes, cat = np.array(etiquetas_orig, dtype=object), np.array(firmantes), np.array(cat)
     negativas = {_norm_categoria(c.strip()) for c in negativas_texto.split(",") if c.strip()}
     if (cat == "LSC50-otras").any():
         negativas.add("LSC50-otras")
-    m = (cat == VOCABULARIO) | np.isin(cat, list(negativas))
+    m = (cat == VOCABULARIO) | np.isin(cat, list(negativas) + list(SIEMPRE_OTRA))
     secuencias, firmantes, cat, etiquetas_orig = secuencias[m], firmantes[m], cat[m], etiquetas_orig[m]
     etiquetas = np.where(cat == VOCABULARIO, etiquetas_orig, OTRA)
     return secuencias, etiquetas, firmantes, cat, negativas
@@ -154,19 +201,29 @@ def main(argv: list[str] | None = None) -> None:
     # Evaluación honesta: personas no vistas (GroupKFold por firmante) Y movimientos ajenos de una
     # categoría que el modelo no vio como «otra cosa» (se entrena con una categoría negativa y se
     # prueba con la otra). El espejo solo se agrega al entrenamiento.
-    probas, reales, firmantes_te, clases_ref = [], [], [], None
+    probas, reales, firmantes_te, clases_ref, probas_reposo = [], [], [], None, []
     t0 = time.time()
     lista_firmantes = np.unique(firmantes)
     rondas = [(n, sorted(negativas - {n})) for n in sorted(negativas)] if len(negativas) > 1 else [(None, sorted(negativas))]
     for prueba_neg, entreno_neg in rondas:
         for k, (tr, te) in enumerate(GroupKFold(n_splits=args.pliegues).split(lista_firmantes, groups=lista_firmantes), 1):
             en_tr = np.isin(firmantes, lista_firmantes[tr])
-            m_tr = en_tr & (es_pos | np.isin(cat, entreno_neg))
+            m_tr = en_tr & (es_pos | np.isin(cat, list(entreno_neg) + list(SIEMPRE_OTRA)))
             Xtr, ytr, _, _ = construir(secuencias[m_tr], etiquetas[m_tr], firmantes[m_tr], con_espejo=True)
             modelo = nuevo_modelo().fit(Xtr, ytr)
             clases_ref = modelo.classes_ if clases_ref is None else clases_ref
-            # Las señas reales se cuentan una sola vez (en la primera ronda)
-            m_te = ~en_tr & ((es_pos if prueba_neg == rondas[0][0] else False) | (cat == prueba_neg))
+            # Las señas reales y el reposo se cuentan una sola vez (en la primera ronda)
+            primera = prueba_neg == rondas[0][0]
+            if primera:
+                mr = ~en_tr & (cat == "Reposo")
+                Xr, _, _, _ = construir(secuencias[mr], etiquetas[mr], firmantes[mr], con_espejo=False)
+                if len(Xr):
+                    pr = modelo.predict_proba(Xr)
+                    alineada = np.zeros((len(pr), len(clases_ref)))
+                    for j, c in enumerate(modelo.classes_):
+                        alineada[:, list(clases_ref).index(c)] = pr[:, j]
+                    probas_reposo.append(alineada)
+            m_te = ~en_tr & ((es_pos if primera else False) | (cat == prueba_neg))
             Xte, yte, gte, _ = construir(secuencias[m_te], etiquetas[m_te], firmantes[m_te], con_espejo=False)
             if len(Xte) == 0:  # p. ej. un pliegue sin ninguna de las 5 personas de LSC50
                 continue
@@ -213,6 +270,11 @@ def main(argv: list[str] | None = None) -> None:
     if depr.any():
         print(f"  …solo personas de las muestras propias (sin ver a esa persona): mejor {top1_pr:.3f}")
     texto_propias = "sin muestras" if np.isnan(top1_pr) else f"{top1_pr:.1%}"
+    reposo_escrito = float("nan")
+    if probas_reposo:
+        _, _, escribe_r, _, _ = decidir(np.vstack(probas_reposo), clases_ref, umbral)
+        reposo_escrito = float(escribe_r.mean())
+        print(f"Palabras escritas ante el reposo y manos quietas (personas no vistas): {reposo_escrito:.1%}")
     sug_ruido = (sugiere & ~pos).sum() / max((~pos).sum(), 1)
     print(f"Sugerencias: {sugiere[pos].mean():.0%} de las señas reales (correcta entre las 3: {sug_util:.0%}); "
           f"por ruido: {sug_ruido:.0%}")
@@ -234,6 +296,7 @@ def main(argv: list[str] | None = None) -> None:
         "vocabulario": args.vocabulario,
         "exactitud_lsc50": float(top1_50),
         "exactitud_propias": float(top1_pr),
+        "palabras_en_reposo": reposo_escrito,
         "muestras_propias": int(np.char.startswith(firmantes.astype(str), "P-").sum()),
         "negativas": sorted(negativas),
         "firmantes": int(len(set(firmantes))),
@@ -274,6 +337,7 @@ Generado por `scripts/entrenar_palabras.py` el {metadatos['fecha']}.
 | Exactitud (mejor de las {n_vocab} opciones) | {top1:.1%} |
 | …solo con las personas de LSC50 (otro entorno de grabación) | {top1_50:.1%} (entre las 3 primeras: {top3_50:.1%}) |
 | …solo con las personas de las muestras propias (grabadas con la app) | {texto_propias} |
+| Palabras escritas ante el reposo y manos quietas (personas no vistas) | {reposo_escrito:.1%} |
 | La seña correcta está entre las 3 primeras opciones | {top3_ok:.1%} |
 | Umbral de confianza elegido | {umbral:.2f} |
 | Señas reales que la app escribe sola | {elegido['cobertura']:.1%} |

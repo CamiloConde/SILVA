@@ -17,7 +17,7 @@ from silva.cuerpo import CuadroCuerpo, DetectorCuerpo, caracteristicas_cuadro
 from silva.detector_manos import DetectorManos
 from silva.letras_movimiento import LETRAS_MOVIMIENTO, ClasificadorMovimiento, SegmentadorLetras, a_isotropicas
 from silva.modelo import Mano, Prediccion
-from silva.palabras import SEGUNDOS_MAX, ClasificadorPalabras, SegmentadorSenas
+from silva.palabras import OTRA, SEGUNDOS_MAX, ClasificadorPalabras, SegmentadorSenas
 from silva.repositorio_historial import RepositorioHistorial
 
 MODO_LETRAS = "letras"
@@ -33,8 +33,8 @@ RESOLUCION = {MODO_LETRAS: (640, 480), MODO_PALABRAS: (640, 360)}
 # Es la pausa entre la palabra escrita y el comienzo de la siguiente seña (antes, 20 cuadros a 30 cuadros/s
 # contando el reposo final de la seña, que son 8 cuadros: queda 12 cuadros = 0,4 s).
 SEGUNDOS_REPETICION = 0.4
-SEGUNDOS_CORRECCION = 3.0  # tras escribir una palabra, durante este tiempo se puede cambiar (1-3) o borrar (X)
-SEGUNDOS_SUGERENCIA = 6.0  # un «¿Quiso decir…?» desaparece sin escribir nada tras este tiempo
+SEGUNDOS_CORRECCION = 8.0  # tras escribir una palabra, durante este tiempo se puede cambiar (1-3) o borrar (X)
+SEGUNDOS_SUGERENCIA = 10.0  # un «¿Quiso decir…?» desaparece sin escribir nada tras este tiempo
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,8 @@ class PalabraPendiente:
     automatica: bool
     creada: float
     vence: float
+    secuencia: np.ndarray | None = None  # la seña tal como se cortó: si alguien la corrige, se guarda para entrenar
+    fps: float = 30.0
 
     def progreso(self, ahora: float) -> float:
         """Fracción del plazo ya transcurrida (0 → 1)."""
@@ -116,6 +118,9 @@ class ControladorSILVA:
         self._t_estatica: float | None = None  # cuándo se escribió la última letra estática
         self._t_inicio_trazo: float | None = None
         self.pendiente: PalabraPendiente | None = None
+        # Cada corrección es una muestra etiquetada por quien usa la app: al_corregir(clave, cuadros, fps) la guarda
+        # (la interfaz la escribe junto a las muestras de Entrenar). clave = OTRA si se borró la palabra escrita.
+        self.al_corregir: Callable[[str, np.ndarray, float], None] | None = None
         # Al entrenar (grabar muestras propias) se reconoce igual, para mostrar qué entiende el modelo,
         # pero no se escribe nada ni se guarda una sesión: cada seña o trazo terminado va en el resultado.
         self.entrenando = False
@@ -214,7 +219,7 @@ class ControladorSILVA:
         puntos = None
         if mano is not None:
             puntos = a_isotropicas(np.array([(l.x, l.y) for l in mano.landmarks], np.float32), ancho, alto)
-        estado = self.segmentador_letras.agregar(puntos, mano.es_izquierda if mano else False)
+        estado = self.segmentador_letras.agregar(puntos, mano.es_izquierda if mano else False, self._reloj())
         if estado.terminado is not None and self.clasificador_movimiento is not None:
             prediccion = self.clasificador_movimiento.predecir(*estado.terminado)
         return ResultadoCuadro(cuadro=cuadro, mano=mano, prediccion=prediccion, letra_confirmada=None,
@@ -234,7 +239,7 @@ class ControladorSILVA:
         if mano is not None:
             puntos = a_isotropicas(np.array([(l.x, l.y) for l in mano.landmarks], np.float32), ancho, alto)
         antes = self.segmentador_letras.moviendo
-        estado = self.segmentador_letras.agregar(puntos, mano.es_izquierda if mano else False)
+        estado = self.segmentador_letras.agregar(puntos, mano.es_izquierda if mano else False, self._reloj())
         if estado.moviendo and not antes:
             self._t_inicio_trazo = self._reloj()
         if estado.terminado is None:
@@ -286,7 +291,8 @@ class ControladorSILVA:
                     self._escribir(prediccion)
                     confirmada = prediccion.letra
                 plazo = SEGUNDOS_CORRECCION if segura else SEGUNDOS_SUGERENCIA
-                self.pendiente = PalabraPendiente(tuple(evaluacion.opciones[:3]), segura, ahora, ahora + plazo)
+                self.pendiente = PalabraPendiente(tuple(evaluacion.opciones[:3]), segura, ahora, ahora + plazo,
+                                                  estado.terminada, self._fps or 30.0)
                 self._ultima_palabra = prediccion.letra
                 self._t_palabra = ahora
 
@@ -313,6 +319,9 @@ class ControladorSILVA:
             return None
         pendiente, elegida = self.pendiente, self.pendiente.opciones[opcion]
         self.pendiente = None
+        # elegir otra opción, o aceptar una sugerencia, dice cuál era la seña: se guarda para entrenar
+        if opcion > 0 or not pendiente.automatica:
+            self._corregida(pendiente, self._clave(elegida.letra))
         if pendiente.automatica:
             if opcion == 0:
                 return elegida.letra  # era correcta
@@ -325,8 +334,18 @@ class ControladorSILVA:
         if self.pendiente is not None:
             if self.pendiente.automatica and self.buffer.ultima == self.pendiente.opciones[0].letra:
                 self.buffer.borrar_ultima()
+                self._corregida(self.pendiente, OTRA)  # se escribió sin que se hiciera esa seña: «otra cosa»
             self._ultima_palabra = None  # permite volver a hacer la misma seña de inmediato
         self.pendiente = None
+
+    def _clave(self, nombre: str) -> str:
+        """Clave del modelo («Buenos dias») de una palabra tal como se muestra («Buenos días»)."""
+        nombres = getattr(self.clasificador_palabras, "nombres", {}) or {}
+        return next((k for k, v in nombres.items() if v == nombre), nombre)
+
+    def _corregida(self, pendiente: PalabraPendiente, clave: str) -> None:
+        if self.al_corregir is not None and pendiente.secuencia is not None:
+            self.al_corregir(clave, pendiente.secuencia, pendiente.fps)
 
     def _escribir(self, palabra: Prediccion) -> None:
         self._ultima_palabra = palabra.letra

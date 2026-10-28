@@ -21,7 +21,14 @@ data class ManoDetectada(val puntos: List<Punto>, val izquierda: Boolean)
  * - escrita (`automatica`): era segura y ya se escribió; hasta que vence se puede cambiar o borrar.
  * - sugerencia: era dudosa; solo se escribe si alguien elige una opción.
  */
-data class PalabraPendiente(val opciones: List<Prediccion>, val automatica: Boolean, val creada: Double, val vence: Double) {
+data class PalabraPendiente(
+    val opciones: List<Prediccion>,
+    val automatica: Boolean,
+    val creada: Double,
+    val vence: Double,
+    val cuadros: List<FloatArray>? = null,  // la seña tal como se cortó: si alguien la corrige, se guarda para entrenar
+    val fps: Double = 30.0,
+) {
     fun progreso(ahora: Double) = ((ahora - creada) / (vence - creada)).coerceIn(0.0, 1.0)
 }
 
@@ -54,6 +61,10 @@ class Motor(
     private val reloj: () -> Double = { System.nanoTime() / 1e9 },
     var alEscribir: (String, Double) -> Unit = { _, _ -> },
 ) {
+    /** Cada corrección es una muestra etiquetada: (clave, cuadros, fps); clave = OTRA si se borró la palabra escrita. */
+    var alCorregir: (String, List<FloatArray>, Double) -> Unit = { _, _, _ -> }
+    private var tPalabrasAnterior: Double? = null
+    private var fpsPalabras = 0.0
     val buffer = BufferTexto()
     var modo = if (clasificadorPalabras != null) Modo.PALABRAS else Modo.LETRAS
         private set
@@ -135,7 +146,7 @@ class Motor(
         val vector = mano?.let { normalizarLandmarks(como4x3(it.puntos, ancho, alto), it.izquierda) }
         val iso = mano?.let { aIsotropicas(it.puntos, ancho, alto) }
         var prediccion = vector?.let { clasificadorLetras.predecir(it) }
-        val trazo = segmentadorLetras.agregar(iso, mano?.izquierda ?: false)
+        val trazo = segmentadorLetras.agregar(iso, mano?.izquierda ?: false, ahora)
         if (trazo != null) clasificadorMovimiento?.let { prediccion = it.predecir(trazo) }
         return Resultado(prediccion, null, buffer.texto, 0.0, ahora, mano = mano, trazando = segmentadorLetras.moviendo,
             vectorLetra = vector, puntosIsotropicos = iso, trazo = trazo)
@@ -144,7 +155,7 @@ class Motor(
     private fun seguirTrazo(mano: ManoDetectada?, ancho: Int, alto: Int, estatica: Prediccion?, ahora: Double): Prediccion? {
         val clasificador = clasificadorMovimiento ?: return null
         val antes = segmentadorLetras.moviendo
-        val trazo = segmentadorLetras.agregar(mano?.let { aIsotropicas(it.puntos, ancho, alto) }, mano?.izquierda ?: false)
+        val trazo = segmentadorLetras.agregar(mano?.let { aIsotropicas(it.puntos, ancho, alto) }, mano?.izquierda ?: false, ahora)
         if (segmentadorLetras.moviendo && !antes) tInicioTrazo = ahora
         if (trazo == null) return null
         val p = clasificador.predecir(trazo)
@@ -165,6 +176,8 @@ class Motor(
         val clasificador = clasificadorPalabras ?: error("Falta el modelo de palabras")
         val ahora = reloj()
         val estado = segmentador.agregar(caracteristicasCuadro(cuadro), ahora)
+        tPalabrasAnterior?.let { if (ahora > it) fpsPalabras = if (fpsPalabras == 0.0) 1 / (ahora - it) else 0.9 * fpsPalabras + 0.1 / (ahora - it) }
+        tPalabrasAnterior = ahora
         if (entrenando) {
             val terminada = estado.terminada
             val p = terminada?.let { clasificador.evaluar(it).mejor }
@@ -191,7 +204,8 @@ class Motor(
                     confirmada = prediccion.texto
                 }
                 val plazo = if (segura) Config.SEGUNDOS_CORRECCION else Config.SEGUNDOS_SUGERENCIA
-                pendiente = PalabraPendiente(ev.opciones.take(3), segura, ahora, ahora + plazo)
+                pendiente = PalabraPendiente(ev.opciones.take(3), segura, ahora, ahora + plazo, terminada,
+                    if (fpsPalabras > 0) fpsPalabras else 30.0)
                 ultimaPalabra = prediccion.texto
                 tPalabra = ahora
             }
@@ -207,6 +221,8 @@ class Motor(
         if (opcion >= p.opciones.size) return null
         val elegida = p.opciones[opcion]
         pendiente = null
+        // elegir otra opción, o aceptar una sugerencia, dice cuál era la seña: se guarda para entrenar
+        if (opcion > 0 || !p.automatica) corregida(p, clave(elegida.texto))
         if (p.automatica) {
             if (opcion == 0) return elegida.texto
             buffer.borrarUltima()
@@ -218,13 +234,24 @@ class Motor(
     /** Descarta la sugerencia, o borra la palabra que se acaba de escribir. */
     fun descartarPendiente() {
         val p = pendiente ?: return
-        if (p.automatica && buffer.ultima == p.opciones[0].texto) buffer.borrarUltima()
+        if (p.automatica && buffer.ultima == p.opciones[0].texto) {
+            buffer.borrarUltima()
+            corregida(p, OTRA)  // se escribió sin que se hiciera esa seña: «otra cosa»
+        }
         ultimaPalabra = null
         pendiente = null
     }
 
     fun cerrarPendiente() {
         pendiente = null
+    }
+
+    /** Clave del modelo («Buenos dias») de una palabra tal como se muestra («Buenos días»). */
+    private fun clave(nombre: String): String =
+        clasificadorPalabras?.claves?.firstOrNull { clasificadorPalabras.nombre(it) == nombre } ?: nombre
+
+    private fun corregida(p: PalabraPendiente, clave: String) {
+        p.cuadros?.let { alCorregir(clave, it, p.fps) }
     }
 
     private fun escribir(p: Prediccion) {
