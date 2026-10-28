@@ -50,10 +50,29 @@ def test_perder_la_mano_cierra_el_trazo_y_un_temblor_corto_no_cuenta():
     seg = SegmentadorLetras()
     for k in range(10):
         seg.agregar(puntos_mano(0.03 * k))
+    sin_mano = round(config.SEGUNDOS_SIN_MANO_TRAZO * 30)  # a 30 cuadros/s
+    assert all(seg.agregar(None).moviendo for _ in range(sin_mano))  # un instante sin mano: el trazo sigue
     assert seg.agregar(None).terminado is not None
     for k in range(4):  # 1-2 cuadros de movimiento: menos que el mínimo
         seg.agregar(puntos_mano(0.04 * k if k < 2 else 0.04))
     assert all(seg.agregar(puntos_mano(0.04)).terminado is None for _ in range(8))
+
+
+def test_una_mano_rapida_que_se_pierde_un_instante_sigue_el_mismo_trazo():
+    """Al trazar rápido la mano sale borrosa y MediaPipe la pierde 2-3 cuadros: no debe partirse la letra."""
+    seg = SegmentadorLetras()
+    for _ in range(3):
+        seg.agregar(puntos_mano())
+    terminados = []
+    for k in range(1, 21):
+        perdida = k in (8, 9, 10)  # ~0,1 s sin mano a mitad del trazo
+        e = seg.agregar(None if perdida else puntos_mano(0.03 * k))
+        terminados += [e.terminado] if e.terminado is not None else []
+    terminados += [e.terminado for e in (seg.agregar(puntos_mano(0.6)) for _ in range(config.CUADROS_QUIETO))
+                   if e.terminado is not None]
+    assert len(terminados) == 1
+    puntos, _ = terminados[0]
+    assert puntos[-1, 0, 0] == pytest.approx(0.5 + 0.6, abs=1e-5)  # llega hasta el final del trazo
 
 
 def test_caracteristicas_no_dependen_de_la_posicion_y_espejan_la_izquierda():

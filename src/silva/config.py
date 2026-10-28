@@ -50,7 +50,9 @@ NUM_CARACTERISTICAS = NUM_LANDMARKS * 2  # (x, y) por landmark
 
 # Detección de la mano
 CONFIANZA_DETECCION = 0.6
-CONFIANZA_SEGUIMIENTO = 0.6
+# Seguir la mano entre cuadros exige menos que encontrarla: con 0,6 una mano rápida (la Z, la J) se perdía a
+# mitad del trazo y MediaPipe volvía a buscarla desde cero
+CONFIANZA_SEGUIMIENTO = 0.4
 # Modo Palabras: con la mano en movimiento (desenfoque, cerca de la cara) MediaPipe la pierde a
 # menudo. Medido en 4 512 cuadros de seña de LSC-54: con 0,6 se detecta en el 84,9 %, con 0,4 en
 # el 87,2 % (la resolución no influye). Se usa 0,4 también al extraer LSC-54 para entrenar.
@@ -95,6 +97,7 @@ MOVIMIENTO_INICIO = 0.08  # media de 3 cuadros por encima: empieza un trazo
 MOVIMIENTO_FIN = 0.04  # por debajo durante CUADROS_QUIETO cuadros: el trazo terminó
 CUADROS_QUIETO = 4
 MIN_CUADROS_MOVIMIENTO = 6  # trazos más cortos (~0,2 s) se ignoran
+SEGUNDOS_SIN_MANO_TRAZO = 0.3  # una mano rápida sale borrosa y se pierde un instante: el trazo sigue
 MAX_CUADROS_MOVIMIENTO = 75  # ~2,5 s: un trazo más largo se corta y se clasifica
 UMBRAL_MOVIMIENTO = 0.4  # probabilidad mínima para escribir una letra con movimiento
 # Recorrido mínimo de la muñeca durante el trazo, en tamaños de mano. En LSC70 el 90 % de las letras con

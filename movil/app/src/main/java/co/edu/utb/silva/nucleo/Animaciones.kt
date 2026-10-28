@@ -122,13 +122,23 @@ class GuiasLetras(datos: ByteArray, val letras: List<String>, private val trazo:
     fun conTrazo(letra: String) = trazo[letras.indexOf(letra)]
 }
 
-/** La mano en el instante t (0-1) del trazo, interpolada entre los cuadros con un movimiento suave. */
+/**
+ * La mano en el instante t (0-1) del trazo, interpolada entre los cuadros con un movimiento suave
+ * (Catmull-Rom: la curva pasa por todos los cuadros sin esquinas; con rectas el trazo se veía a saltos).
+ */
 fun manoEn(cuadros: List<FloatArray>, t: Float): FloatArray {
     val s = t * t * (3 - 2 * t)  // empieza y termina despacio
     val x = s * (cuadros.size - 1)
     val i = minOf(x.toInt(), cuadros.size - 2)
     val f = x - i
-    return FloatArray(cuadros[i].size) { (1 - f) * cuadros[i][it] + f * cuadros[i + 1][it] }
+    val p0 = cuadros[maxOf(i - 1, 0)]
+    val p1 = cuadros[i]
+    val p2 = cuadros[i + 1]
+    val p3 = cuadros[minOf(i + 2, cuadros.size - 1)]
+    return FloatArray(p1.size) {
+        0.5f * (2 * p1[it] + (p2[it] - p0[it]) * f + (2 * p0[it] - 5 * p1[it] + 4 * p2[it] - p3[it]) * f * f +
+            (3 * p1[it] - p0[it] - 3 * p2[it] + p3[it]) * f * f * f)
+    }
 }
 
 /** El mismo movimiento con el recorrido de la muñeca reducido (factor < 1): la mano conserva su tamaño. */

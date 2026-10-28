@@ -83,7 +83,7 @@ class Detectores(private val context: Context, private val config: Aceleracion =
 
     private val vacia: Bitmap by lazy { Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888) }
 
-    private fun manos(n: Int, confianza: Float, modo: RunningMode) = crear("Manos", config.gpuManos, { d ->
+    private fun manos(n: Int, confianza: Float, modo: RunningMode, seguimiento: Float = confianza) = crear("Manos", config.gpuManos, { d ->
         HandLandmarker.createFromOptions(context,
             HandLandmarker.HandLandmarkerOptions.builder()
                 .setBaseOptions(base("hand_landmarker.task", d))
@@ -91,11 +91,11 @@ class Detectores(private val context: Context, private val config: Aceleracion =
                 .setNumHands(n)
                 .setMinHandDetectionConfidence(confianza)
                 .setMinHandPresenceConfidence(confianza)
-                .setMinTrackingConfidence(confianza)
+                .setMinTrackingConfidence(seguimiento)
                 .build())
     }) { if (modo == RunningMode.VIDEO) it.detectForVideo(BitmapImageBuilder(vacia).build(), 0) else it.detect(BitmapImageBuilder(vacia).build()) }
 
-    private val manoLetrasPerezosa = lazy { manos(1, Config.CONFIANZA_DETECCION, RunningMode.VIDEO) }
+    private val manoLetrasPerezosa = lazy { manos(1, Config.CONFIANZA_DETECCION, RunningMode.VIDEO, Config.CONFIANZA_SEGUIMIENTO) }
     private val manosPalabrasPerezosa = lazy { manos(2, Config.CONFIANZA_MANOS_PALABRAS, RunningMode.VIDEO) }
     private val posePerezosa = lazy {
         crear("Pose", config.gpuPose, { d ->

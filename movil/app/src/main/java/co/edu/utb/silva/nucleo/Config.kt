@@ -9,12 +9,14 @@ object Config {
     const val UMBRAL_CONFIANZA = 0.60  // con 0,80 muchas letras de manos nuevas no llegaban a escribirse
     const val CUADROS_ESTABLES = 5
     const val CONFIANZA_DETECCION = 0.6f
+    const val CONFIANZA_SEGUIMIENTO = 0.4f  // con 0,6 una mano rápida se perdía a mitad del trazo
 
     // Letras con movimiento
     const val MOVIMIENTO_INICIO = 0.08
     const val MOVIMIENTO_FIN = 0.04
     const val CUADROS_QUIETO = 4
     const val MIN_CUADROS_MOVIMIENTO = 6
+    const val SEGUNDOS_SIN_MANO_TRAZO = 0.3  // una mano rápida sale borrosa y se pierde un instante
     const val MAX_CUADROS_MOVIMIENTO = 75
     const val UMBRAL_MOVIMIENTO = 0.4
     const val RECORRIDO_MINIMO = 0.4
@@ -29,8 +31,8 @@ object Config {
     const val ALTURA_ACTIVA = 0.8
     const val MOVIMIENTO_ACTIVO = 0.12
     const val CONFIANZA_MANOS_PALABRAS = 0.4f
-    const val SEGUNDOS_CORRECCION = 3.0
-    const val SEGUNDOS_SUGERENCIA = 6.0
+    const val SEGUNDOS_CORRECCION = 8.0
+    const val SEGUNDOS_SUGERENCIA = 10.0
     const val CUADROS_REPETICION = 20
 
     // El segmentador de Palabras mide en segundos (silva.palabras): los valores en cuadros de arriba se

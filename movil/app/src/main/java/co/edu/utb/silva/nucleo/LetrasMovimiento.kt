@@ -64,64 +64,85 @@ fun caracteristicasTrazo(puntos: List<Array<FloatArray>>, izquierda: Boolean): F
 class TrazoTerminado(val puntos: List<Array<FloatArray>>, val izquierda: Boolean)
 
 /** Detecta el tramo en que la mano se mueve (traslación o cambio de forma, en tamaños de mano). */
+/**
+ * Detecta el tramo en que la mano se mueve (silva.letras_movimiento.SegmentadorLetras), medido en segundos: los
+ * umbrales están en «por cuadro a 30 cuadros/s» y el teléfono procesa unos 19. Sin reloj supone 30 cuadros/s.
+ */
 class SegmentadorLetras {
     private var anterior: Array<FloatArray>? = null
-    private var previos = mutableListOf<Array<FloatArray>>()
+    private var tAnterior: Double? = null
+    private var previos = mutableListOf<Pair<Double, Array<FloatArray>>>()
     private var grabados = mutableListOf<Array<FloatArray>>()
+    private var tiempos = mutableListOf<Double>()
     private var izquierdas = mutableListOf<Boolean>()
-    private var quieto = 0
+    private var ultimoMovimiento = -1  // índice en grabados del último cuadro que se movió
     private val velocidades = ArrayDeque<Double>()
+    private var n = 0  // cuadros recibidos: reloj por omisión, a 30 cuadros/s
     var moviendo = false
         private set
 
     fun reiniciar() {
         anterior = null
+        tAnterior = null
         previos = mutableListOf()
         grabados = mutableListOf()
+        tiempos = mutableListOf()
         izquierdas = mutableListOf()
-        quieto = 0
+        ultimoMovimiento = -1
         velocidades.clear()
         moviendo = false
     }
 
-    /** Devuelve el trazo cuando termina. `puntos` = 21 puntos isotrópicos, o null si no se ve la mano. */
-    fun agregar(puntos: Array<FloatArray>?, izquierda: Boolean = false): TrazoTerminado? {
+    /** Devuelve el trazo cuando termina. `puntos` = 21 puntos isotrópicos, o null si no se ve la mano; tCuadro en segundos. */
+    fun agregar(puntos: Array<FloatArray>?, izquierda: Boolean = false, tCuadro: Double? = null): TrazoTerminado? {
+        val t = tCuadro ?: (n / FPS_TRAZO)
+        n++
         if (puntos == null) {
-            val t = cerrar()
+            // una mano rápida sale borrosa y MediaPipe la pierde un instante: el trazo sigue si vuelve pronto
+            val ta = tAnterior
+            if (moviendo && ta != null && t - ta <= Config.SEGUNDOS_SIN_MANO_TRAZO) return null
+            val c = cerrar()
             anterior = null
+            tAnterior = null
             previos = mutableListOf()
             velocidades.clear()
-            return t
+            return c
         }
-        var velocidad = 0.0
-        anterior?.let { a ->
+        var velocidad = 0.0  // desplazamiento por cuadro a 30 cuadros/s (en tamaños de mano)
+        val a = anterior
+        val ta = tAnterior
+        if (a != null && ta != null) {
             val escala = maxOf(hypot((puntos[9][0] - puntos[0][0]).toDouble(), (puntos[9][1] - puntos[0][1]).toDouble()), 1e-6)
             var suma = 0.0
             for (j in 0 until 21) suma += hypot((puntos[j][0] - a[j][0]).toDouble(), (puntos[j][1] - a[j][1]).toDouble())
-            velocidad = suma / 21 / escala
+            velocidad = suma / 21 / escala / (maxOf(t - ta, 1e-3) * FPS_TRAZO)
         }
         anterior = puntos
+        tAnterior = t
         velocidades.addLast(velocidad)
         while (velocidades.size > 3) velocidades.removeFirst()
 
         if (!moviendo) {
-            previos.add(puntos)
+            previos.add(t to puntos)
             while (previos.size > 3) previos.removeAt(0)
             if (velocidades.size == 3 && velocidades.average() >= Config.MOVIMIENTO_INICIO) {
                 moviendo = true
-                grabados = previos.toMutableList()
+                tiempos = previos.map { it.first }.toMutableList()
+                grabados = previos.map { it.second }.toMutableList()
                 izquierdas = MutableList(grabados.size) { izquierda }
-                quieto = 0
+                ultimoMovimiento = grabados.size - 1
             }
             return null
         }
         grabados.add(puntos)
+        tiempos.add(t)
         izquierdas.add(izquierda)
-        quieto = if (velocidad < Config.MOVIMIENTO_FIN) quieto + 1 else 0
-        if (quieto >= Config.CUADROS_QUIETO || grabados.size >= Config.MAX_CUADROS_MOVIMIENTO) {
-            val t = cerrar()
-            previos = mutableListOf(puntos)
-            return t
+        if (velocidad >= Config.MOVIMIENTO_FIN) ultimoMovimiento = grabados.size - 1
+        val quieto = t - tiempos[ultimoMovimiento] >= Config.CUADROS_QUIETO / FPS_TRAZO - 1e-6
+        if (quieto || t - tiempos[0] >= (Config.MAX_CUADROS_MOVIMIENTO - 1) / FPS_TRAZO - 1e-6) {
+            val c = cerrar()
+            previos = mutableListOf(t to puntos)
+            return c
         }
         return null
     }
@@ -129,16 +150,21 @@ class SegmentadorLetras {
     private fun cerrar(): TrazoTerminado? {
         if (!moviendo) return null
         moviendo = false
-        var g: List<Array<FloatArray>> = grabados
-        if (quieto > 0) g = g.subList(0, g.size - quieto + 1)
+        // sin la cola quieta del final, salvo un cuadro (donde termina el trazo)
+        val fin = minOf(ultimoMovimiento + 2, grabados.size)
+        val g = grabados.subList(0, fin).toList()
+        val ts = tiempos.subList(0, fin).toList()
         val izquierda = izquierdas.count { it } * 2 >= izquierdas.size
-        val salida = if (g.size >= Config.MIN_CUADROS_MOVIMIENTO) TrazoTerminado(g.toList(), izquierda) else null
         grabados = mutableListOf()
+        tiempos = mutableListOf()
         izquierdas = mutableListOf()
-        quieto = 0
-        return salida
+        ultimoMovimiento = -1
+        if (ts.last() - ts.first() < (Config.MIN_CUADROS_MOVIMIENTO - 1) / FPS_TRAZO - 1e-6) return null
+        return TrazoTerminado(g, izquierda)
     }
 }
+
+private const val FPS_TRAZO = 30.0  // los umbrales de Config están en «por cuadro a 30 cuadros/s»
 
 /** Clasificador de trazos: devuelve OTRA si la muñeca casi no se desplazó (cambio entre letras). */
 class ClasificadorMovimiento(private val bosque: Bosque, private val clases: List<String>) {

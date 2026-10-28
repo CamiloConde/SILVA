@@ -264,12 +264,17 @@ def acercar_trazo(cuadros: np.ndarray, factor: float) -> np.ndarray:
 
 
 def mano_en(cuadros: np.ndarray, t: float) -> np.ndarray:
-    """La mano en el instante t (0-1) del trazo, interpolada entre los 6 cuadros con un movimiento suave."""
+    """La mano en el instante t (0-1) del trazo, interpolada entre los 6 cuadros con un movimiento suave.
+
+    Catmull-Rom: la curva pasa por los 6 cuadros sin esquinas (con rectas entre ellos, el trazo se veía a saltos).
+    """
     t = t * t * (3 - 2 * t)  # empieza y termina despacio
     x = t * (len(cuadros) - 1)
     i = min(int(x), len(cuadros) - 2)
     f = x - i
-    return (1 - f) * cuadros[i] + f * cuadros[i + 1]
+    p0, p1, p2, p3 = (cuadros[max(i - 1, 0)], cuadros[i], cuadros[i + 1], cuadros[min(i + 2, len(cuadros) - 1)])
+    return 0.5 * (2 * p1 + (p2 - p0) * f + (2 * p0 - 5 * p1 + 4 * p2 - p3) * f * f
+                  + (3 * p1 - p0 - 3 * p2 + p3) * f * f * f)
 
 
 def dibujar_mano_guia(p: QPainter, m: np.ndarray, punto, escala: float) -> None:

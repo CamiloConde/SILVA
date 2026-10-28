@@ -13,8 +13,11 @@ modelos/animaciones_senas.npz: una animación de la figura por cada palabra del 
 modelos/animaciones_letras.npz: una guía por cada letra del alfabeto dactilológico.
     Para cada letra se elige, entre las 70 personas de LSC70 (Muñoz Galindez et al., 2024; CC BY 4.0), la
     secuencia que los modelos de SILVA reconocen con más confianza, con la mano visible en las 6 imágenes.
+    En las letras con trazo se pide además un recorrido amplio y una mano de tamaño parejo, y se suaviza el
+    temblor de la forma de la mano entre imágenes.
     Se guarda la mano derecha (la izquierda se espeja) en tamaños de palma, centrada: 6 cuadros, que en las
-    letras con trazo muestran el movimiento.
+    letras con trazo muestran el movimiento. Se guarda vista como en un espejo, igual que la propia imagen en la
+    cámara de SILVA: así la J y la Z se leen al derecho y la mano de la guía es la que uno ve de sí mismo.
 
 Uso:
     python scripts/generar_animaciones.py
@@ -124,6 +127,44 @@ def _normalizar(puntos: np.ndarray, izquierda: bool) -> np.ndarray:
     return (v / escala if escala > 0 else v).reshape(-1)
 
 
+def _centrada(puntos: np.ndarray, izquierda: bool) -> np.ndarray:
+    """La mano derecha (la izquierda se espeja) en tamaños de palma, centrada en el recuadro de todo el trazo."""
+    if izquierda:
+        puntos = puntos.copy()
+        puntos[..., 0] = 1 - puntos[..., 0]
+    iso = a_isotropicas(puntos, 640, 480)
+    palma = float(np.median(np.hypot(*(iso[:, 9] - iso[:, 0]).T)))
+    centro = (iso.reshape(-1, 2).min(axis=0) + iso.reshape(-1, 2).max(axis=0)) / 2
+    return ((iso - centro) / palma).astype(np.float32)
+
+
+def _suavizar_forma(cuadros: np.ndarray) -> np.ndarray:
+    """Quita el temblor de la detección en la forma de la mano (relativa a la muñeca), sin tocar el recorrido
+    de la muñeca ni la forma del primer y el último cuadro (donde empieza y termina la letra)."""
+    muneca = cuadros[:, :1]
+    forma = cuadros - muneca
+    suave = forma.copy()
+    suave[1:-1] = 0.25 * forma[:-2] + 0.5 * forma[1:-1] + 0.25 * forma[2:]
+    return (suave + muneca).astype(np.float32)
+
+
+def _z_trazada(candidatas: np.ndarray) -> np.ndarray:
+    """La Z: el índice dibuja una Z. En LSC70 las 6 imágenes no alcanzan a mostrar sus esquinas (se veía como una
+    raya), así que se toma la mano con el índice más estirado y se la lleva por una Z limpia: arriba, la diagonal
+    y abajo. Aquí en vista de cámara, como las demás antes de espejarlas al guardar."""
+    formas = candidatas.reshape(-1, 21, 2)
+    palma = np.hypot(*(formas[:, 9] - formas[:, 0]).T)
+    estirado = np.hypot(*(formas[:, 8] - formas[:, 5]).T) / palma
+    ancho = np.hypot(*(formas[:, 5] - formas[:, 17]).T) / palma
+    forma = formas[int(np.argmax(estirado * np.minimum(1.0, ancho / 0.6)))]
+    forma = (forma - forma[0]) / max(float(np.hypot(*(forma[9] - forma[0]))), 1e-6)
+    # punta del índice en los 6 cuadros (en tamaños de palma): 0-2 arriba, 2-3 diagonal, 3-5 abajo
+    camino = np.array([(0.8, -0.6), (0.0, -0.6), (-0.8, -0.6), (0.8, 0.6), (0.0, 0.6), (-0.8, 0.6)], np.float32)
+    cuadros = np.stack([forma + (q - forma[8]) for q in camino])
+    centro = (cuadros.reshape(-1, 2).min(axis=0) + cuadros.reshape(-1, 2).max(axis=0)) / 2
+    return (cuadros - centro).astype(np.float32)
+
+
 def guias_letras() -> None:
     estaticas = ClasificadorPreentrenado()
     movimiento = ClasificadorMovimiento()
@@ -131,6 +172,7 @@ def guias_letras() -> None:
     letras, guias, con_trazo = [], [], []
     for letra in config.LETRAS:
         mejor, mejor_puntaje = None, -1.0
+        candidatas = []  # letras con trazo: (puntaje, secuencia centrada)
         for puntos, izq in zip(d["puntos"][d["letras"] == letra], d["izquierda"][d["letras"] == letra]):
             if np.isnan(puntos).any():
                 continue  # la mano debe verse en las 6 imágenes
@@ -155,22 +197,35 @@ def guias_letras() -> None:
             iso = a_isotropicas(puntos, 640, 480)
             frente = np.median(np.hypot(*(iso[:, 5] - iso[:, 17]).T) / np.hypot(*(iso[:, 9] - iso[:, 0]).T))
             puntaje *= 0.4 + 0.6 * min(1.0, frente / 0.7)
+            if letra not in config.LETRAS_ESTATICAS:
+                if puntaje > 0:
+                    candidatas.append((puntaje, _centrada(puntos, izquierda)))
+                continue
             if puntaje > mejor_puntaje:
                 mejor, mejor_puntaje = (puntos.copy(), izquierda), puntaje
-        if mejor is None:
+        if candidatas:
+            # Letras con trazo: la más clara a veces casi no se mueve, y la guía no mostraba el trazo. Se pide un
+            # recorrido de la punta del índice al menos como el de la mitad de las personas, y una mano de
+            # tamaño parejo en las 6 imágenes (si cambia mucho, una imagen se detectó mal y la mano «salta»).
+            C = np.stack([c for _, c in candidatas])
+            recorrido = np.hypot(*np.diff(C[:, :, 8], axis=1).transpose(2, 0, 1)).sum(axis=1)
+            tamano = np.hypot(*(C[:, :, 9] - C[:, :, 0]).transpose(2, 0, 1))
+            parejo = np.exp(-(tamano.std(axis=1) / tamano.mean(axis=1)) / 0.15)
+            amplio = np.minimum(1.0, recorrido / np.median(recorrido))
+            i = int(np.argmax([p * a * q for (p, _), a, q in zip(candidatas, amplio, parejo)]))
+            mejor_puntaje = candidatas[i][0]
+            guias.append(_z_trazada(C) if letra == "Z" else _suavizar_forma(C[i]))
+        elif mejor is None:
             print(f"  {letra}: sin una secuencia completa, se omite")
             continue
-        puntos, izquierda = mejor
-        if izquierda:  # se muestra siempre la mano derecha
-            puntos[..., 0] = 1 - puntos[..., 0]
-        iso = a_isotropicas(puntos, 640, 480)
-        palma = float(np.median(np.hypot(*(iso[:, 9] - iso[:, 0]).T)))
-        centro = (iso.reshape(-1, 2).min(axis=0) + iso.reshape(-1, 2).max(axis=0)) / 2
-        guias.append(((iso - centro) / palma).astype(np.float32))
+        else:
+            guias.append(_centrada(*mejor))
         letras.append(letra)
         con_trazo.append(letra not in config.LETRAS_ESTATICAS)
         print(f"  {letra}: claridad {mejor_puntaje:.0%}")
-    np.savez_compressed(DESTINO_LETRAS, letras=np.array(letras), cuadros=np.stack(guias), trazo=np.array(con_trazo))
+    cuadros = np.stack(guias)
+    cuadros[..., 0] *= -1  # vista de espejo, como la cámara en la app
+    np.savez_compressed(DESTINO_LETRAS, letras=np.array(letras), cuadros=cuadros, trazo=np.array(con_trazo))
     print(f"{len(letras)} guías de letras -> {DESTINO_LETRAS} ({DESTINO_LETRAS.stat().st_size / 1e3:.0f} KB)")
 
 

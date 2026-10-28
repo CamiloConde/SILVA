@@ -226,6 +226,23 @@ class MotorTest {
         assertNotNull(trazo)
         assertTrue(trazo!!.puntos.size >= 12)
     }
+
+    @Test
+    fun unaManoRapidaQueSePierdeUnInstanteSigueElMismoTrazo() {
+        val seg = SegmentadorLetras()
+        fun mano(dx: Float) = Array(21) { i -> floatArrayOf(0.5f + dx + i * 0.01f, 0.5f - i * 0.01f) }
+        repeat(3) { seg.agregar(mano(0f)) }
+        val trazos = mutableListOf<TrazoTerminado>()
+        for (k in 1..20) seg.agregar(if (k in 8..10) null else mano(0.03f * k))?.let { trazos.add(it) }
+        repeat(Config.CUADROS_QUIETO) { seg.agregar(mano(0.6f))?.let { trazos.add(it) } }
+        assertEquals(1, trazos.size)  // ~0,1 s sin mano a mitad del trazo no lo parte
+        assertEquals(1.1f, trazos[0].puntos.last()[0][0], 1e-5f)
+        // más de SEGUNDOS_SIN_MANO_TRAZO sin mano sí lo termina
+        for (k in 1..10) seg.agregar(mano(0.6f + 0.03f * k))
+        var cerrado: TrazoTerminado? = null
+        repeat(12) { cerrado = seg.agregar(null) ?: cerrado }
+        assertNotNull(cerrado)
+    }
 }
 
 /** Reposo aprendido (silva.palabras): sentada, la persona descansa las manos sobre la mesa. */

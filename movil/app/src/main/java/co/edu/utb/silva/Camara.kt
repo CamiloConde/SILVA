@@ -3,11 +3,17 @@ package co.edu.utb.silva
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.util.Range
 import android.util.Size
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -64,6 +70,7 @@ class Camara(
         return ultimoBrillo
     }
 
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     fun iniciar(dueno: LifecycleOwner, alFallar: (String) -> Unit) {
         val futuro = ProcessCameraProvider.getInstance(context)
         futuro.addListener({
@@ -78,21 +85,24 @@ class Camara(
                     // más píxeles en cada cuadro
                     .setResolutionStrategy(ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                     .build()
+                val selector = if (frontal) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                val rango = rangoFps(p, selector).also { Log.i("SILVA", "Rango de cuadros/s de la cámara: ${it ?: "el de siempre"}") }
                 val analisis = ImageAnalysis.Builder()
                     .setResolutionSelector(resolucion)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .also { b -> rango?.let { Camera2Interop.Extender(b).setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) } }
                     .build()
                 analisis.setAnalyzer(hilo) { procesar(it) }
                 // los modelos del modo actual se cargan antes del primer cuadro
                 hilo.execute { detectores.preparar(palabras = motor.modo == Modo.PALABRAS) }
-                val selector = if (frontal) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
                 p.unbindAll()
                 var conPrevia = false
                 if (vistaPrevia != null) {
                     val previa = Preview.Builder()
                         .setResolutionSelector(ResolutionSelector.Builder()
                             .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY).build())
+                        .also { b -> rango?.let { Camera2Interop.Extender(b).setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) } }
                         .build()
                     previa.surfaceProvider = vistaPrevia.surfaceProvider
                     try {
@@ -112,6 +122,20 @@ class Camara(
                 alFallar("No se pudo abrir la cámara: ${e.message}")
             }
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    /**
+     * Cuadros por segundo que se piden a la exposición automática: con poca luz muchas cámaras bajan a 15 cuadros/s
+     * para exponer más tiempo, y una mano rápida sale borrosa y MediaPipe la pierde. Se elige el rango que
+     * llega a 30 con el mínimo más alto que ofrezca la cámara (p. ej. [30, 30] o [24, 30]); null = el de siempre.
+     */
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private fun rangoFps(p: ProcessCameraProvider, selector: CameraSelector): Range<Int>? = try {
+        val info = selector.filter(p.availableCameraInfos).firstOrNull()
+        val rangos = info?.let { Camera2CameraInfo.from(it).getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) }
+        rangos?.filter { it.upper == 30 && it.lower >= 20 }?.maxByOrNull { it.lower }
+    } catch (e: Exception) {
+        null
     }
 
     fun detener() {
