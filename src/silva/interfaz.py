@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 
 from silva import __version__, config
 from silva.animacion import AnimacionesSenas, AnimacionSena, GuiaLetra, GuiasLetras
-from silva.captura_video import CamaraNoDisponibleError
+from silva.captura_video import CamaraNoDisponibleError, camaras_disponibles
 from silva.controlador import MODO_LETRAS, MODO_PALABRAS, ControladorSILVA, PalabraPendiente, ResultadoCuadro
 from silva.cuerpo import dibujar_cuerpo, evaluar_encuadre
 from silva.detector_manos import dibujar_mano
@@ -631,6 +631,9 @@ class VentanaPrincipal(QWidget):
         self._chip_activo: str | None = None
         self._dialogo_historial: QDialog | None = None
         self._entrenar: VentanaEntrenar | None = None
+        # las correcciones de palabras se guardan como muestras para entrenar, junto a las de Entrenar
+        self.grabador = GrabadorMuestras()
+        self.ctrl.al_corregir = self._guardar_correccion
         self._confirmada_hasta = 0.0  # mientras tanto la barra queda azul: «confirmada y agregada al texto»
         self._ultima_resolucion = ""
         self._sugerencias = Sugerencias()
@@ -659,10 +662,6 @@ class VentanaPrincipal(QWidget):
         self._aplicar_modo()
         self.resize(1280, 820)
 
-    @property
-    def combo_camara(self) -> QComboBox:
-        return self._ajustes.combo_camara
-
     # --------------------------------------------------------------- construcción
     def _construir(self) -> None:
         raiz = QVBoxLayout(self)
@@ -683,10 +682,12 @@ class VentanaPrincipal(QWidget):
         self.lbl_fps = _etiqueta("", "info_camara")
         fila.addWidget(self.lbl_fps)
         fila.addStretch()
-        self.btn_cambiar_camara = _boton("Cambiar cámara", "enlace", self.cambiar_camara)
-        self.btn_cambiar_camara.setToolTip("Pasa a la siguiente cámara, por ejemplo el celular como cámara web\n"
-                                           "(Enlace Móvil de Windows 11, DroidCam o Iriun). También en Ajustes.")
-        fila.addWidget(self.btn_cambiar_camara)
+        self.combo_camara = ComboCamaras()
+        self.combo_camara.setToolTip("Las cámaras conectadas a este equipo; el celular también sirve de cámara web\n"
+                                     "(Enlace Móvil de Windows 11, DroidCam o Iriun). La lista se actualiza al abrirla.")
+        self.combo_camara.setCurrentIndex(min(getattr(self.ctrl.captura, "indice", 0), self.combo_camara.count() - 1))
+        self.combo_camara.currentIndexChanged.connect(self._cambiar_camara)
+        fila.addWidget(self.combo_camara)
         izquierda.addLayout(fila)
         cuerpo.addLayout(izquierda, 1)
         cuerpo.addWidget(self._panel_lateral())
@@ -974,7 +975,6 @@ class VentanaPrincipal(QWidget):
     def _al_iniciar(self, _sesion_id: int) -> None:
         self.btn_principal.setEnabled(True)
         self.btn_principal.setText("Detener")
-        self._ajustes.combo_camara.setEnabled(False)
         self.lbl_ultima.setText("")
         self._actualizar_texto()
 
@@ -1050,17 +1050,14 @@ class VentanaPrincipal(QWidget):
         anim.start(QPropertyAnimation.DeleteWhenStopped)
 
     def _cambiar_camara(self, indice: int) -> None:
-        if not self.activo:
-            self.ctrl.captura.indice = indice
-            self._mostrar_info_camara()
-
-    def cambiar_camara(self) -> None:
-        """Pasa a la siguiente cámara (1 → 2 → 3 → 4 → 1); si está encendida, la reinicia con la nueva."""
+        """Elegida en la lista: si la cámara está encendida, se reinicia con la nueva."""
+        if indice < 0 or indice == getattr(self.ctrl.captura, "indice", 0):
+            return
         estaba = self.activo
         if estaba:
             self.detener()
-        combo = self._ajustes.combo_camara
-        combo.setCurrentIndex((combo.currentIndex() + 1) % combo.count())
+        self.ctrl.captura.indice = indice
+        self._mostrar_info_camara()
         if estaba:
             self.iniciar()
 
@@ -1292,12 +1289,11 @@ class VentanaPrincipal(QWidget):
         self._chip_activo = clave
 
     def _mostrar_info_camara(self, fps: float | None = None) -> None:
-        i = getattr(self.ctrl.captura, "indice", 0)
-        nombre = "Cámara integrada" if i == 0 else f"Cámara {i + 1}"
+        # el nombre de la cámara ya está en la lista de al lado: aquí, solo cómo va
         if self.activo and fps is not None:
-            self.lbl_fps.setText(f"{nombre} · {self._ultima_resolucion} · {fps:.0f} fps")
+            self.lbl_fps.setText(f"{self._ultima_resolucion} · {fps:.0f} fps")
         else:
-            self.lbl_fps.setText(f"{nombre} · apagada")
+            self.lbl_fps.setText("Cámara apagada")
 
     def _actualizar_texto(self) -> None:
         with self._candado:
@@ -1331,7 +1327,6 @@ class VentanaPrincipal(QWidget):
     def _mostrar_inactivo(self) -> None:
         self.btn_principal.setText("Iniciar")
         self.video.poner_aviso("Presiona «Iniciar» para encender la cámara")
-        self._ajustes.combo_camara.setEnabled(True) if hasattr(self, "_ajustes") else None
         self._mostrar_pendiente(None, 0.0)
         self._mostrar_info_camara()
         self._poner_letra("–", dudosa=True)
@@ -1342,6 +1337,13 @@ class VentanaPrincipal(QWidget):
 
     def _mostrar_error(self, titulo: str, mensaje: str) -> None:
         QMessageBox.critical(self, titulo, mensaje)
+
+    def _guardar_correccion(self, clave: str, cuadros, fps: float) -> None:
+        persona = str(QSettings("SILVA", "SILVA").value("persona", "") or "").strip()
+        if self.grabador.palabra(clave, persona, cuadros, fps):
+            self.lbl_ultima.setText("Corrección guardada para entrenar (Entrenar → Entrenar los modelos)")
+            if self._entrenar is not None:
+                self._entrenar._actualizar_total()
 
     def ver_entrenar(self) -> None:
         if self._entrenar is None:
@@ -1464,14 +1466,9 @@ class DialogoAjustes(QDialog):
         v.addWidget(_etiqueta("Ajustes", "titulo"))
         v.addSpacing(6)
         v.addWidget(_etiqueta("Cámara", "seccion"))
-        self.combo_camara = QComboBox()
-        self.combo_camara.setFocusPolicy(Qt.NoFocus)
-        self.combo_camara.addItems(["Cámara integrada", "Cámara 2", "Cámara 3", "Cámara 4"])
-        self.combo_camara.setCurrentIndex(getattr(ventana.ctrl.captura, "indice", 0))
-        self.combo_camara.currentIndexChanged.connect(ventana._cambiar_camara)
-        v.addWidget(self.combo_camara)
-        nota = _etiqueta("El celular también sirve de cámara web (Enlace Móvil de Windows 11, DroidCam o Iriun): "
-                         "se puede ubicar más lejos y apuntar mejor. Cambia la cámara con la cámara apagada.", "tenue")
+        nota = _etiqueta("Se elige en la lista debajo del video, que muestra las cámaras conectadas por su nombre. "
+                         "El celular también sirve de cámara web (Enlace Móvil de Windows 11, DroidCam o Iriun): "
+                         "se puede ubicar más lejos y apuntar mejor.", "tenue")
         nota.setWordWrap(True)
         v.addWidget(nota)
         v.addSpacing(6)
@@ -1481,6 +1478,32 @@ class DialogoAjustes(QDialog):
         self.combo_tamano.currentIndexChanged.connect(lambda i: ventana.poner_texto_grande(i == 1))
         v.addWidget(self.combo_tamano)
         v.addStretch()
+
+
+class ComboCamaras(QComboBox):
+    """Lista desplegable con las cámaras conectadas, por su nombre; se actualiza cada vez que se abre
+    (por si se conectó el celular como cámara web después de abrir SILVA)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.actualizar()
+
+    def actualizar(self) -> None:
+        nombres = camaras_disponibles() or [f"Cámara {i + 1}" for i in range(4)]  # sin la lista: numeradas
+        actual = max(self.currentIndex(), 0)
+        if nombres == [self.itemText(i) for i in range(self.count())]:
+            return
+        self.blockSignals(True)  # rehacer la lista no es elegir otra cámara
+        self.clear()
+        self.addItems(nombres)
+        self.setCurrentIndex(min(actual, len(nombres) - 1))
+        self.blockSignals(False)
+
+    def showPopup(self) -> None:
+        self.actualizar()
+        super().showPopup()
 
 
 class EtiquetaClic(QLabel):
@@ -1552,7 +1575,7 @@ class VentanaEntrenar(QDialog):
         self.setWindowTitle("Entrenar")
         self.setStyleSheet(HOJA_ESTILO)
         self.resize(620, 780)
-        self.grabador = GrabadorMuestras()
+        self.grabador = ventana.grabador  # el mismo de las correcciones
         self.grabando = False
         self._clave: str | None = None
         self._entrenamiento: TrabajadorEntrenamiento | None = None

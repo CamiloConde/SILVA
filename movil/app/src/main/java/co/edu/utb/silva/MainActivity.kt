@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -21,6 +22,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -29,7 +32,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -79,6 +83,9 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -137,6 +144,7 @@ class MainActivity : ComponentActivity() {
     private var estado: Estado? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()  // igual en todas las versiones de Android: la app pone sus márgenes (safeDrawing)
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
@@ -204,7 +212,12 @@ private fun Modifier.borde(arriba: Boolean = false, color: Color = LINEA) = draw
 @Composable
 private fun App(e: Estado, actividad: ComponentActivity) {
     // con el teclado abierto se oculta la navegación de abajo, para que se vea lo que se escribe
-    val teclado = WindowInsets.isImeVisible
+    // Algunos teléfonos informan el teclado como «visible» aunque esté cerrado (según la marca o la navegación
+    // con botones), y la barra de abajo desaparecía: solo se oculta si el teclado ocupa de verdad la pantalla.
+    val densidad = LocalDensity.current
+    val teclado = with(densidad) {
+        (WindowInsets.ime.getBottom(this) - WindowInsets.navigationBars.getBottom(this)).toDp() > 150.dp
+    }
     var verLista by remember { mutableStateOf(false) }
     var verVocabulario by remember { mutableStateOf(false) }
     var verSena by remember { mutableStateOf<List<String>?>(null) }
@@ -301,17 +314,23 @@ private fun Pestana(texto: String, activa: Boolean, alPulsar: () -> Unit) {
 
 @Composable
 private fun BarraInferior(actual: Pantalla, alElegir: (Pantalla) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(60.dp).background(BLANCO).borde(arriba = true)) {
+    // alto mínimo y no fijo: con letra grande o pantalla chica, los nombres usan dos líneas sin cortarse; la letra
+    // del sistema se respeta hasta 1,15× (más grande, «Conversar» no cabe en un quinto de pantalla y se partía)
+    val d = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(d.density, minOf(d.fontScale, 1.15f))) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).height(IntrinsicSize.Min).background(BLANCO).borde(arriba = true)) {
         for ((p, nombre) in listOf(Pantalla.TRADUCIR to "Señas a texto", Pantalla.TEXTO_A_SENAS to "Texto a señas",
                 Pantalla.CONVERSAR to "Conversar", Pantalla.HISTORIAL to "Historial", Pantalla.ENTRENAR to "Entrenar")) {
             val activa = p == actual
             Box(Modifier.weight(1f).fillMaxHeight().clickable { alElegir(p) }
-                .drawBehind { if (activa) drawRect(AZUL, Offset.Zero, Size(size.width, 3.dp.toPx())) },
+                .drawBehind { if (activa) drawRect(AZUL, Offset.Zero, Size(size.width, 3.dp.toPx())) }
+                .padding(horizontal = 2.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center) {
-                T(nombre, 13.sp, if (activa) TINTA else GRAFITO, if (activa) FontWeight.SemiBold else FontWeight.Normal,
-                    alinear = TextAlign.Center, maxLineas = 2)
+                T(nombre.replace(" a ", "\na "), 11.sp, if (activa) TINTA else GRAFITO,
+                    if (activa) FontWeight.SemiBold else FontWeight.Normal, alinear = TextAlign.Center, maxLineas = 2)
             }
         }
+    }
     }
 }
 
@@ -356,7 +375,7 @@ private fun CamaraConCapas(e: Estado, actividad: ComponentActivity, modifier: Mo
             }
         }
         e.pendiente?.let { p -> TarjetaPendiente(p.opciones.map { it.texto }, p.automatica, e.progresoPendiente,
-            Modifier.align(Alignment.BottomCenter).padding(10.dp)) }
+            Modifier.align(Alignment.BottomCenter).padding(10.dp), elegir = { e.elegir(it) }, descartar = { e.descartar() }) }
     }
 }
 
@@ -481,7 +500,7 @@ private fun Segmentos(llenos: Int, color: Color, vacio: Color = LINEA) {
 
 @Composable
 private fun BotonTinta(texto: String, modifier: Modifier, alPulsar: () -> Unit) =
-    Button(alPulsar, modifier.height(54.dp), shape = RoundedCornerShape(8.dp),
+    Button(alPulsar, modifier.height(54.dp), shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 6.dp),
         colors = ButtonDefaults.buttonColors(containerColor = TINTA, contentColor = BLANCO)) {
         T(texto, 16.sp, BLANCO, FontWeight.SemiBold, maxLineas = 1)
     }
@@ -489,21 +508,39 @@ private fun BotonTinta(texto: String, modifier: Modifier, alPulsar: () -> Unit) 
 @Composable
 private fun BotonClaro(texto: String, modifier: Modifier, habilitado: Boolean = true, alPulsar: () -> Unit) =
     OutlinedButton(alPulsar, modifier.height(54.dp), enabled = habilitado, shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, if (habilitado) BORDE_BOTON else LINEA),
+        contentPadding = PaddingValues(horizontal = 6.dp), border = BorderStroke(1.dp, if (habilitado) BORDE_BOTON else LINEA),
         colors = ButtonDefaults.outlinedButtonColors(containerColor = BLANCO)) {
         T(texto, 16.sp, if (habilitado) TINTA else APAGADO, maxLineas = 1)
     }
 
 /** Palabra escrita (con sus alternativas) o «¿Quisiste decir?», en grande sobre el video. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TarjetaPendiente(opciones: List<String>, escrita: Boolean, progreso: Double, modifier: Modifier) {
+private fun TarjetaPendiente(opciones: List<String>, escrita: Boolean, progreso: Double, modifier: Modifier,
+                             elegir: (Int) -> Unit, descartar: () -> Unit) {
+    // en el celular se corrige tocando: cada opción es un botón (en el PC son las teclas 1, 2, 3 y X)
     val color = if (escrita) AZUL else OCRE
-    Column(modifier.fillMaxWidth().background(BLANCO, RoundedCornerShape(6.dp)).border(1.dp, LINEA, RoundedCornerShape(6.dp))) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
-            T(if (escrita) "ESCRITA" else "¿QUISISTE DECIR?", 10.sp, color, FontWeight.SemiBold)
-            T(if (escrita) opciones[0].uppercase() else opciones.mapIndexed { i, o -> "${i + 1} $o" }.joinToString("   "),
-                if (escrita) 22.sp else 15.sp, peso = if (escrita) FontWeight.Bold else FontWeight.Medium,
-                alinear = TextAlign.Center, modifier = Modifier.fillMaxWidth(), maxLineas = 2)
+    Column(modifier.fillMaxWidth().background(BLANCO, RoundedCornerShape(8.dp)).border(1.dp, LINEA, RoundedCornerShape(8.dp))) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                T(if (escrita) "ESCRITA" else "¿QUISISTE DECIR?", 11.sp, color, FontWeight.SemiBold)
+                if (escrita) T("  " + opciones[0].uppercase(), 20.sp, peso = FontWeight.Bold, maxLineas = 1)
+            }
+            if (escrita && opciones.size > 1) T("¿No era? Toca la correcta:", 13.sp, GRAFITO, modifier = Modifier.padding(top = 4.dp))
+            FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                opciones.forEachIndexed { i, o ->
+                    if (!escrita || i > 0) Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(22.dp))
+                        .background(if (escrita) PAPEL else Color(0xFFFFF4DC)).border(1.dp, color, RoundedCornerShape(22.dp))
+                        .clickable { elegir(i) }.padding(horizontal = 16.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+                        T(o, 16.sp, TINTA, FontWeight.Medium, maxLineas = 1)
+                    }
+                }
+                Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(22.dp)).clickable { descartar() }
+                    .padding(horizontal = 14.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+                    T(if (escrita) "Borrar" else "No era ninguna", 15.sp, GRAFITO, subrayado = true, maxLineas = 1)
+                }
+            }
         }
         Box(Modifier.fillMaxWidth(progreso.toFloat()).height(3.dp).background(color))
     }
