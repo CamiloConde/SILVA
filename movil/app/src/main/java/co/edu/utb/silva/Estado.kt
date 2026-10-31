@@ -357,6 +357,17 @@ class Estado(private val context: Context, val modelos: Modelos, aceleracion: Ac
     val muestras = Muestras(context)
     private val preferencias = context.getSharedPreferences("silva", Context.MODE_PRIVATE)
     var persona by mutableStateOf(preferencias.getString("persona", "") ?: ""); private set
+
+    init {
+        // las señas confirmadas se refuerzan en este teléfono (Motor.reforzar) y se recuerdan al volver a abrir
+        try {
+            val guardados = org.json.JSONObject(preferencias.getString("refuerzos", "{}") ?: "{}")
+            for (k in guardados.keys()) motor.refuerzos[k] = guardados.getDouble(k)
+        } catch (e: org.json.JSONException) {
+            preferencias.edit().remove("refuerzos").apply()
+        }
+        motor.alReforzar = { r -> preferencias.edit().putString("refuerzos", org.json.JSONObject(r).toString()).apply() }
+    }
     var objetivo by mutableStateOf<String?>(null); private set  // clave de la palabra o letra que se graba
     var grabandoMuestras by mutableStateOf(false); private set
     var avisoEntrenar by mutableStateOf(""); private set

@@ -259,6 +259,9 @@ class ClasificadorPalabras(
     private val nombres: Map<String, String>,
     val umbral: Double,
     val umbralSugerencia: Double,
+    // fracción de la probabilidad de «otra cosa» que debe tener la seña para escribirse o sugerirse
+    val margenOtra: Double = 1.0,
+    val margenSugerencia: Double = 0.5,
 ) {
     /** Claves de las señas (las del entrenamiento, p. ej. «Buenos dias») y su nombre visible («Buenos días»). */
     val claves: List<String> = clases.filter { it != OTRA }

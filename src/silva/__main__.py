@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 from silva.buffer_texto import BufferTexto
 from silva.captura_video import CapturaVideo
 from silva.clasificador import ClasificadorPreentrenado
-from silva.controlador import ControladorSILVA
+from silva.controlador import ControladorSILVA, cargar_refuerzos, guardar_refuerzos
 from silva.cuerpo import DetectorCuerpo
 from silva.detector_manos import DetectorManos
 from silva.interfaz import GRAFITO, PAPEL, TINTA, VentanaPrincipal, cargar_fuentes
@@ -64,10 +64,12 @@ def _cargar_palabras():
     """El modo Palabras es opcional: si falta su modelo, la app funciona solo con letras."""
     try:
         clasificador = ClasificadorPalabras()
-        umbrales = (clasificador.metadatos.get("umbral", 0.5), clasificador.metadatos.get("umbral_sugerencia", 0.12))
+        m = clasificador.metadatos  # un modelo anterior a la v1.5.1 no trae los márgenes: la regla de antes
+        umbrales = (m.get("umbral", 0.5), m.get("umbral_sugerencia", 0.12), m.get("margen_otra", 1.0),
+                    m.get("margen_sugerencia", 0.5))
         return DetectorCuerpo(), clasificador, umbrales
     except FileNotFoundError:
-        return None, None, (0.5, 0.12)
+        return None, None, (0.5, 0.12, 1.0, 0.5)
 
 
 def _cargar_movimiento():
@@ -191,7 +193,8 @@ def main() -> None:
 
     try:
         # Orden de la Figura 3: primero se cargan los modelos, después (al presionar Iniciar) la cámara.
-        detector_cuerpo, clasificador_palabras, (umbral_palabras, umbral_sugerencia) = _cargar_palabras()
+        detector_cuerpo, clasificador_palabras, (umbral_palabras, umbral_sugerencia, margen_otra,
+                                                 margen_sugerencia) = _cargar_palabras()
         controlador = ControladorSILVA(
             captura=CapturaVideo(),
             detector=DetectorManos(),
@@ -202,8 +205,14 @@ def main() -> None:
             clasificador_palabras=clasificador_palabras,
             umbral_palabras=umbral_palabras,
             umbral_sugerencia=umbral_sugerencia,
+            margen_otra=margen_otra,
+            margen_sugerencia=margen_sugerencia,
             clasificador_movimiento=_cargar_movimiento(),
         )
+        from silva import config
+
+        controlador.refuerzos = cargar_refuerzos(config.RUTA_REFUERZOS)
+        controlador.al_reforzar = lambda refuerzos: guardar_refuerzos(config.RUTA_REFUERZOS, refuerzos)
     except FileNotFoundError as error:
         aviso.close()
         QMessageBox.critical(None, "SILVA — falta un modelo", str(error))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -17,7 +19,7 @@ from silva.cuerpo import CuadroCuerpo, DetectorCuerpo, caracteristicas_cuadro
 from silva.detector_manos import DetectorManos
 from silva.letras_movimiento import LETRAS_MOVIMIENTO, ClasificadorMovimiento, SegmentadorLetras, a_isotropicas
 from silva.modelo import Mano, Prediccion
-from silva.palabras import OTRA, SEGUNDOS_MAX, ClasificadorPalabras, SegmentadorSenas
+from silva.palabras import OTRA, SEGUNDOS_MAX, ClasificadorPalabras, Evaluacion, SegmentadorSenas
 from silva.repositorio_historial import RepositorioHistorial
 
 MODO_LETRAS = "letras"
@@ -34,7 +36,15 @@ RESOLUCION = {MODO_LETRAS: (640, 480), MODO_PALABRAS: (640, 360)}
 # contando el reposo final de la seña, que son 8 cuadros: queda 12 cuadros = 0,4 s).
 SEGUNDOS_REPETICION = 0.4
 SEGUNDOS_CORRECCION = 8.0  # tras escribir una palabra, durante este tiempo se puede cambiar (1-3) o borrar (X)
-SEGUNDOS_SUGERENCIA = 10.0  # un «¿Quiso decir…?» desaparece sin escribir nada tras este tiempo
+SEGUNDOS_SUGERENCIA = 15.0  # un «¿Quiso decir…?» desaparece sin escribir nada tras este tiempo
+# Refuerzo por persona: cada vez que alguien confirma una seña, el modelo la reconoce con más facilidad en este
+# equipo (su probabilidad se multiplica por e^refuerzo antes de decidir). Borrar una palabra que se escribió
+# sola la baja. Los límites evitan que una seña termine escribiéndose ante cualquier movimiento.
+REFUERZO_CONFIRMAR = 0.35  # elegir una sugerencia o corregir a esa opción: ×1,4 cada vez…
+REFUERZO_ACERTADA = 0.15  # aceptar la palabra que ya se escribió (Espacio)
+REFUERZO_BORRAR = -0.25  # borrar una palabra que se escribió sola
+REFUERZO_MAXIMO = 1.1  # …hasta ×3
+REFUERZO_MINIMO = -0.7  # hasta ×0,5
 
 
 @dataclass(frozen=True)
@@ -85,6 +95,23 @@ class ResultadoCuadro:
         return self.mano is not None
 
 
+def cargar_refuerzos(ruta) -> dict[str, float]:
+    """Refuerzos guardados en este equipo ({} si no hay o el archivo está dañado)."""
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+        return {str(k): float(v) for k, v in datos.items()}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def guardar_refuerzos(ruta, refuerzos: dict[str, float]) -> None:
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(json.dumps(refuerzos, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass  # sin permiso de escritura: el refuerzo dura hasta cerrar la app
+
+
 class ControladorSILVA:
     def __init__(
         self,
@@ -97,6 +124,8 @@ class ControladorSILVA:
         clasificador_palabras: ClasificadorPalabras | None = None,
         umbral_palabras: float = 0.5,
         umbral_sugerencia: float = 0.12,
+        margen_otra: float = 1.0,
+        margen_sugerencia: float = 0.5,
         clasificador_movimiento: ClasificadorMovimiento | None = None,
         umbral_movimiento: float = config.UMBRAL_MOVIMIENTO,
         reloj: Callable[[], float] = time.monotonic,
@@ -110,6 +139,10 @@ class ControladorSILVA:
         self.clasificador_palabras = clasificador_palabras
         self.umbral_palabras = umbral_palabras
         self.umbral_sugerencia = umbral_sugerencia
+        # fracción de la probabilidad de «otra cosa» que debe tener la seña para escribirse o sugerirse
+        # (scripts/entrenar_palabras.py: MARGEN_ESCRITURA y MARGEN_SUGERENCIA; los guarda en el modelo)
+        self.margen_otra = margen_otra
+        self.margen_sugerencia = margen_sugerencia
         self._reloj = reloj
         self.segmentador = SegmentadorSenas()
         self.clasificador_movimiento = clasificador_movimiento
@@ -121,6 +154,9 @@ class ControladorSILVA:
         # Cada corrección es una muestra etiquetada por quien usa la app: al_corregir(clave, cuadros, fps) la guarda
         # (la interfaz la escribe junto a las muestras de Entrenar). clave = OTRA si se borró la palabra escrita.
         self.al_corregir: Callable[[str, np.ndarray, float], None] | None = None
+        # Refuerzo de cada palabra (nombre visible → logaritmo del factor); al_reforzar lo guarda en el equipo.
+        self.refuerzos: dict[str, float] = {}
+        self.al_reforzar: Callable[[dict[str, float]], None] | None = None
         # Al entrenar (grabar muestras propias) se reconoce igual, para mostrar qué entiende el modelo,
         # pero no se escribe nada ni se guarda una sesión: cada seña o trazo terminado va en el resultado.
         self.entrenando = False
@@ -270,22 +306,24 @@ class ControladorSILVA:
                 brillo=_brillo(cuadro), sena_terminada=terminada)
         confirmada = None
 
-        # La pendiente se resuelve al vencer su plazo o cuando empieza una seña nueva
-        # (seguir signando = aceptar la provisional e ignorar la sugerencia).
-        if self.pendiente is not None and (estado.grabando or ahora >= self.pendiente.vence):
+        # La pendiente se resuelve al vencer su plazo, al elegir o borrar, o cuando llega otra palabra. Que
+        # aparezca una mano no la cierra: en el celular, acercar la mano para tocar una opción empezaba una seña
+        # y la tarjeta se iba antes de poder elegir.
+        if self.pendiente is not None and ahora >= self.pendiente.vence:
             confirmada = self._cerrar_pendiente()
 
         prediccion = None
         if estado.terminada is not None:
-            evaluacion = self.clasificador_palabras.evaluar(estado.terminada)
+            evaluacion = self._reforzar(self.clasificador_palabras.evaluar(estado.terminada))
             prediccion = evaluacion.mejor
             repetida = (prediccion.letra == self._ultima_palabra and estado.inicio is not None
                         and estado.inicio - self._t_palabra < SEGUNDOS_REPETICION)
-            segura = prediccion.confianza >= self.umbral_palabras and prediccion.confianza >= evaluacion.prob_otra
+            segura = (prediccion.confianza >= self.umbral_palabras
+                      and prediccion.confianza >= self.margen_otra * evaluacion.prob_otra)
             dudosa = (prediccion.confianza >= self.umbral_sugerencia
-                      and prediccion.confianza >= 0.5 * evaluacion.prob_otra)
+                      and prediccion.confianza >= self.margen_sugerencia * evaluacion.prob_otra)
             if not repetida and (segura or dudosa):
-                if self.pendiente is not None:  # caso raro: dos señas sin cuadro intermedio
+                if self.pendiente is not None:  # la palabra anterior queda como está; la nueva toma su lugar
                     confirmada = self._cerrar_pendiente() or confirmada
                 if segura:  # se escribe apenas se reconoce; queda unos segundos para corregirla
                     self._escribir(prediccion)
@@ -319,11 +357,14 @@ class ControladorSILVA:
             return None
         pendiente, elegida = self.pendiente, self.pendiente.opciones[opcion]
         self.pendiente = None
-        # elegir otra opción, o aceptar una sugerencia, dice cuál era la seña: se guarda para entrenar
+        # elegir otra opción, o aceptar una sugerencia, dice cuál era la seña: se guarda para entrenar y se
+        # refuerza para que la próxima vez se reconozca más fácil
         if opcion > 0 or not pendiente.automatica:
             self._corregida(pendiente, self._clave(elegida.letra))
+            self.reforzar(elegida.letra, REFUERZO_CONFIRMAR)
         if pendiente.automatica:
             if opcion == 0:
+                self.reforzar(elegida.letra, REFUERZO_ACERTADA)
                 return elegida.letra  # era correcta
             self.buffer.borrar_ultima()  # se reemplaza la que se escribió
         self._escribir(elegida)
@@ -335,8 +376,31 @@ class ControladorSILVA:
             if self.pendiente.automatica and self.buffer.ultima == self.pendiente.opciones[0].letra:
                 self.buffer.borrar_ultima()
                 self._corregida(self.pendiente, OTRA)  # se escribió sin que se hiciera esa seña: «otra cosa»
+                self.reforzar(self.pendiente.opciones[0].letra, REFUERZO_BORRAR)
             self._ultima_palabra = None  # permite volver a hacer la misma seña de inmediato
         self.pendiente = None
+
+    def reforzar(self, palabra: str, cambio: float) -> None:
+        """Sube (o baja) el refuerzo de una palabra, dentro de sus límites, y lo guarda."""
+        valor = min(max(self.refuerzos.get(palabra, 0.0) + cambio, REFUERZO_MINIMO), REFUERZO_MAXIMO)
+        if abs(valor) < 1e-6:
+            self.refuerzos.pop(palabra, None)
+        else:
+            self.refuerzos[palabra] = round(valor, 4)
+        if self.al_reforzar is not None:
+            self.al_reforzar(dict(self.refuerzos))
+
+    def _reforzar(self, ev: Evaluacion) -> Evaluacion:
+        """Aplica los refuerzos a las probabilidades (se vuelven a normalizar junto con «otra cosa»)."""
+        if not self.refuerzos:
+            return ev
+        pesos = [o.confianza * math.exp(self.refuerzos.get(o.letra, 0.0)) for o in ev.opciones]
+        total = sum(pesos) + ev.prob_otra
+        if total <= 0:
+            return ev
+        opciones = sorted((Prediccion(o.letra, p / total) for o, p in zip(ev.opciones, pesos)),
+                          key=lambda o: o.confianza, reverse=True)
+        return Evaluacion(opciones, ev.prob_otra / total)
 
     def _clave(self, nombre: str) -> str:
         """Clave del modelo («Buenos dias») de una palabra tal como se muestra («Buenos días»)."""

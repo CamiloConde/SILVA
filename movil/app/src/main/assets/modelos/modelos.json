@@ -127,7 +127,9 @@
    "Tranquilo": "Tranquilo"
   },
   "umbral": 0.15,
-  "umbral_sugerencia": 0.12
+  "umbral_sugerencia": 0.1,
+  "margen_otra": 0.5,
+  "margen_sugerencia": 0.3
  },
  "animaciones": [
   "Apoyar",

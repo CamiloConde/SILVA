@@ -10,6 +10,7 @@ data/externo/
 
 # Historial de sesiones del usuario (datos locales, no se versionan)
 data/historial.db
+data/refuerzos_palabras.json
 
 # Ejecutable (scripts/construir_ejecutable.py)
 build/

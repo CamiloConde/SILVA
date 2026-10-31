@@ -17,6 +17,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import os
 import time
 import unicodedata
 from datetime import datetime
@@ -37,10 +38,14 @@ ORIGEN_LSC50 = config.DIR_LANDMARKS / "lsc50_secuencias.npz"  # scripts/preparar
 RUTA_REPORTE = config.DIR_INFORMES / "metricas_palabras.md"
 SEMILLA = 42
 VOCABULARIO = "Cordialidad"
-EXACTITUD_OBJETIVO = 0.95  # lo que la app escribe sola debe acertar al menos esto (lo dudoso se sugiere)…
+EXACTITUD_OBJETIVO = 0.93  # lo que la app escribe sola debe acertar al menos esto (lo dudoso se sugiere)…
 FALSAS_MAXIMO = 0.15  # …y escribir (de forma provisional) a lo sumo esta fracción de movimientos ajenos
-UMBRAL_SUGERENCIA = 0.12  # por debajo del umbral pero por encima de esto: «¿Quiso decir…?»
-MARGEN_SUGERENCIA = 0.5  # para sugerir, la seña debe tener al menos la mitad de la probabilidad de «otra cosa»
+# Para escribir, la seña debe tener al menos esta fracción de la probabilidad de «otra cosa». Con 1 (superarla)
+# la app escribía solo la mitad de las señas reales y el resto quedaba sin nada o como sugerencia: el umbral
+# ni siquiera influía. Con 0,5: 63 % escritas (93,7 % de acierto) y casi nada ante el reposo (0,1 %).
+MARGEN_ESCRITURA = 0.5
+UMBRAL_SUGERENCIA = 0.10  # por debajo del umbral pero por encima de esto: «¿Quiso decir…?»
+MARGEN_SUGERENCIA = 0.3  # …si además tiene al menos esta fracción de la probabilidad de «otra cosa»
 # «Otra cosa» que se usa siempre al entrenar (no es una de las categorías que se rotan para medir palabras falsas)
 SIEMPRE_OTRA = ("Reposo", "Propias-otras")
 
@@ -125,14 +130,15 @@ def construir(secuencias, etiquetas, firmantes, con_espejo: bool):
 
 
 def decidir(proba: np.ndarray, clases: np.ndarray, umbral: float):
-    """La misma regla que la app: escribe la mejor seña conocida si supera el umbral y a «otra cosa»."""
+    """La misma regla que la app: escribe la mejor seña conocida si supera el umbral y tiene al menos
+    MARGEN_ESCRITURA de la probabilidad de «otra cosa»."""
     conocidas = clases != OTRA
     p_otra = proba[:, ~conocidas].max(axis=1) if (~conocidas).any() else np.zeros(len(proba))
     pc = proba[:, conocidas]
     mejor = clases[conocidas][pc.argmax(axis=1)]
     conf = pc.max(axis=1)
     top3 = clases[conocidas][np.argsort(-pc, axis=1)[:, :3]]
-    escribe = (conf >= umbral) & (conf >= p_otra)
+    escribe = (conf >= umbral) & (conf >= MARGEN_ESCRITURA * p_otra)
     sugiere = ~escribe & (conf >= UMBRAL_SUGERENCIA) & (conf >= MARGEN_SUGERENCIA * p_otra)
     return mejor, conf, escribe, sugiere, top3
 
@@ -237,6 +243,10 @@ def main(argv: list[str] | None = None) -> None:
         print(f"  ronda: «otra cosa» de prueba = {prueba_neg} (entrenada con {', '.join(entreno_neg)})")
     proba, real = np.vstack(probas), np.array(reales, dtype=object)
     firmantes_te = np.array(firmantes_te)
+    if os.environ.get("SILVA_VOLCAR_PROBAS"):  # para estudiar otras reglas de decisión sin reentrenar
+        np.savez_compressed(os.environ["SILVA_VOLCAR_PROBAS"], proba=proba, real=real.astype(str),
+                            clases=np.array(clases_ref, dtype=str), firmantes=firmantes_te.astype(str),
+                            reposo=np.vstack(probas_reposo) if probas_reposo else np.zeros((0, len(clases_ref))))
     pos = real != OTRA
 
     # Curva de umbrales y elección
@@ -303,6 +313,8 @@ def main(argv: list[str] | None = None) -> None:
         "exactitud_firmantes_no_vistos": float(top1),
         "umbral": umbral,
         "umbral_sugerencia": UMBRAL_SUGERENCIA,
+        "margen_otra": MARGEN_ESCRITURA,
+        "margen_sugerencia": MARGEN_SUGERENCIA,
         "sklearn": sklearn.__version__,
     }
     destino = config.DIR_MODELOS_PROPIOS / "modelo_palabras.pkl"
@@ -346,10 +358,10 @@ Generado por `scripts/entrenar_palabras.py` el {metadatos['fecha']}.
 | Señas reales que quedan como «¿Quiso decir…?» | {sug_pos.sum() / pos.sum():.1%} (la correcta está entre las 3 opciones en el {sug_util:.0%}) |
 
 Regla de la app:
-- Si la mejor seña conocida supera el umbral **y** a «otra cosa», se escribe de forma
-  provisional, y quien esté en el computador puede corregirla o descartarla.
-- Si solo supera {UMBRAL_SUGERENCIA} (y al menos la mitad de «otra cosa»), se muestra «¿Quiso decir…?»
-  con 3 opciones, sin escribir nada.
+- Si la mejor seña conocida supera el umbral **y** tiene al menos {MARGEN_ESCRITURA:.0%} de la probabilidad
+  de «otra cosa», se escribe de forma provisional, y quien esté en el computador puede corregirla o descartarla.
+- Si solo supera {UMBRAL_SUGERENCIA} (y al menos {MARGEN_SUGERENCIA:.0%} de «otra cosa»), se muestra
+  «¿Quiso decir…?» con 3 opciones, sin escribir nada.
 - En otro caso, no se muestra nada.
 
 El umbral es el menor que logra al menos {EXACTITUD_OBJETIVO:.0%} de exactitud en lo escrito y a lo sumo

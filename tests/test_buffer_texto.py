@@ -17,13 +17,13 @@ def test_confirma_al_quinto_cuadro_estable():
 
 def test_no_confirma_con_confianza_baja():
     b = BufferTexto()
-    alimentar(b, "A", 0.59, 20)
+    alimentar(b, "A", 0.49, 20)
     assert b.texto == ""
 
 
 def test_confianza_exactamente_en_el_umbral_si_cuenta():
     b = BufferTexto()
-    alimentar(b, "A", 0.60, 5)
+    alimentar(b, "A", 0.50, 5)
     assert b.texto == "A"
 
 
@@ -38,7 +38,7 @@ def test_prediccion_inestable_reinicia_la_racha():
 def test_un_cuadro_de_baja_confianza_reinicia_la_racha():
     b = BufferTexto()
     alimentar(b, "A", 0.9, 4)
-    b.procesar(Prediccion("A", 0.5))
+    b.procesar(Prediccion("A", 0.4))
     alimentar(b, "A", 0.9, 4)
     assert b.texto == ""
 

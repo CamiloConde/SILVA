@@ -1,5 +1,8 @@
 package co.edu.utb.silva.nucleo
 
+import kotlin.math.abs
+import kotlin.math.exp
+
 enum class Modo { LETRAS, PALABRAS }
 
 /**
@@ -63,6 +66,9 @@ class Motor(
 ) {
     /** Cada corrección es una muestra etiquetada: (clave, cuadros, fps); clave = OTRA si se borró la palabra escrita. */
     var alCorregir: (String, List<FloatArray>, Double) -> Unit = { _, _, _ -> }
+    /** Refuerzo de cada palabra (nombre visible → logaritmo del factor); alReforzar lo guarda en el teléfono. */
+    val refuerzos = mutableMapOf<String, Double>()
+    var alReforzar: (Map<String, Double>) -> Unit = {}
     private var tPalabrasAnterior: Double? = null
     private var fpsPalabras = 0.0
     val buffer = BufferTexto()
@@ -186,17 +192,21 @@ class Motor(
                 senaTerminada = terminada)
         }
         var confirmada: String? = null
-        pendiente?.let { if (estado.grabando || ahora >= it.vence) cerrarPendiente() }
+        // Que aparezca una mano no la cierra: al acercar la mano para tocar una opción empezaba una seña y la
+        // tarjeta se iba antes de poder elegir. Se cierra al vencer, al elegir o borrar, o con la palabra siguiente.
+        pendiente?.let { if (ahora >= it.vence) cerrarPendiente() }
 
         var prediccion: Prediccion? = null
         val terminada = estado.terminada
         if (terminada != null) {
-            val ev = clasificador.evaluar(terminada)
+            val ev = reforzada(clasificador.evaluar(terminada))
             prediccion = ev.mejor
             val inicio = estado.inicio
             val repetida = prediccion.texto == ultimaPalabra && inicio != null && inicio - tPalabra < Config.SEGUNDOS_REPETICION
-            val segura = prediccion.confianza >= clasificador.umbral && prediccion.confianza >= ev.probOtra
-            val dudosa = prediccion.confianza >= clasificador.umbralSugerencia && prediccion.confianza >= 0.5 * ev.probOtra
+            val segura = prediccion.confianza >= clasificador.umbral &&
+                prediccion.confianza >= clasificador.margenOtra * ev.probOtra
+            val dudosa = prediccion.confianza >= clasificador.umbralSugerencia &&
+                prediccion.confianza >= clasificador.margenSugerencia * ev.probOtra
             if (!repetida && (segura || dudosa)) {
                 cerrarPendiente()
                 if (segura) {  // se escribe apenas se reconoce; queda unos segundos para corregirla
@@ -221,10 +231,17 @@ class Motor(
         if (opcion >= p.opciones.size) return null
         val elegida = p.opciones[opcion]
         pendiente = null
-        // elegir otra opción, o aceptar una sugerencia, dice cuál era la seña: se guarda para entrenar
-        if (opcion > 0 || !p.automatica) corregida(p, clave(elegida.texto))
+        // elegir otra opción, o aceptar una sugerencia, dice cuál era la seña: se guarda para entrenar y se
+        // refuerza para que la próxima vez se reconozca más fácil
+        if (opcion > 0 || !p.automatica) {
+            corregida(p, clave(elegida.texto))
+            reforzar(elegida.texto, Config.REFUERZO_CONFIRMAR)
+        }
         if (p.automatica) {
-            if (opcion == 0) return elegida.texto
+            if (opcion == 0) {
+                reforzar(elegida.texto, Config.REFUERZO_ACERTADA)
+                return elegida.texto
+            }
             buffer.borrarUltima()
         }
         escribir(elegida)
@@ -237,6 +254,7 @@ class Motor(
         if (p.automatica && buffer.ultima == p.opciones[0].texto) {
             buffer.borrarUltima()
             corregida(p, OTRA)  // se escribió sin que se hiciera esa seña: «otra cosa»
+            reforzar(p.opciones[0].texto, Config.REFUERZO_BORRAR)
         }
         ultimaPalabra = null
         pendiente = null
@@ -244,6 +262,23 @@ class Motor(
 
     fun cerrarPendiente() {
         pendiente = null
+    }
+
+    /** Sube (o baja) el refuerzo de una palabra, dentro de sus límites, y lo guarda. */
+    fun reforzar(palabra: String, cambio: Double) {
+        val valor = ((refuerzos[palabra] ?: 0.0) + cambio).coerceIn(Config.REFUERZO_MINIMO, Config.REFUERZO_MAXIMO)
+        if (abs(valor) < 1e-6) refuerzos.remove(palabra) else refuerzos[palabra] = valor
+        alReforzar(refuerzos.toMap())
+    }
+
+    /** Aplica los refuerzos a las probabilidades (se vuelven a normalizar junto con «otra cosa»). */
+    private fun reforzada(ev: Evaluacion): Evaluacion {
+        if (refuerzos.isEmpty()) return ev
+        val pesos = ev.opciones.map { it.confianza * exp(refuerzos[it.texto] ?: 0.0) }
+        val total = pesos.sum() + ev.probOtra
+        if (total <= 0) return ev
+        val opciones = ev.opciones.zip(pesos) { o, p -> Prediccion(o.texto, p / total) }.sortedByDescending { it.confianza }
+        return Evaluacion(opciones, ev.probOtra / total)
     }
 
     /** Clave del modelo («Buenos dias») de una palabra tal como se muestra («Buenos días»). */

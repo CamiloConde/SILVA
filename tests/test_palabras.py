@@ -208,7 +208,7 @@ class _Reloj:
         return self.t
 
 
-def _controlador(fines, salidas, umbral=0.25):
+def _controlador(fines, salidas, umbral=0.25, duracion=5):
     from conftest import CapturaFalsa, ClasificadorFalso, DetectorFalso
     from silva.controlador import MODO_PALABRAS, ControladorSILVA
     from silva.repositorio_historial import RepositorioHistorial
@@ -217,7 +217,7 @@ def _controlador(fines, salidas, umbral=0.25):
                             detector_cuerpo=_CuerpoFalso(), clasificador_palabras=_ClasificadorPalabrasFalso(salidas),
                             umbral_palabras=umbral, umbral_sugerencia=0.12, reloj=reloj)
     ctrl.cambiar_modo(MODO_PALABRAS)
-    ctrl.segmentador = _SegmentadorGuionado(fines)
+    ctrl.segmentador = _SegmentadorGuionado(fines, duracion)
     ctrl.iniciar()
     return ctrl, reloj
 
@@ -250,10 +250,10 @@ def test_movimiento_ajeno_no_escribe_nada():
 
 
 def test_sena_dudosa_es_sugerencia_y_solo_se_escribe_si_se_elige():
-    ctrl, reloj = _controlador(fines=[10, 360], salidas=[("Gracias", 0.18, 0.2), ("Gracias", 0.18, 0.2)])
+    ctrl, reloj = _controlador(fines=[10, 520], salidas=[("Gracias", 0.18, 0.2), ("Gracias", 0.18, 0.2)])
     r = _avanzar(ctrl, reloj, 10)[-1]
     assert r.pendiente is not None and not r.pendiente.automatica
-    _avanzar(ctrl, reloj, 310)  # vence sin que nadie elija (10 s)
+    _avanzar(ctrl, reloj, 460)  # vence sin que nadie elija (15 s)
     assert ctrl.buffer.texto == "" and ctrl.pendiente is None
     _avanzar(ctrl, reloj, 50)  # segunda vez: alguien elige la opción 2
     assert ctrl.confirmar_pendiente(1) == "Chao"
@@ -400,3 +400,48 @@ def test_las_correcciones_se_guardan_para_entrenar():
     assert guardadas == [("Chao", 10), (OTRA, 10)]
     assert ctrl.buffer.texto.strip() == "Chao"
 
+
+
+def test_la_sugerencia_no_se_quita_al_aparecer_una_mano():
+    """En el celular, acercar la mano para tocar una opción empezaba una seña y la sugerencia desaparecía."""
+    ctrl, reloj = _controlador(fines=[10, 400], salidas=[("Gracias", 0.18, 0.2)], duracion=200)
+    r = _avanzar(ctrl, reloj, 210)[-1]  # ya empezó otra seña (grabando) y no ha terminado
+    assert r.grabando_sena and ctrl.pendiente is not None
+    assert ctrl.confirmar_pendiente(0) == "Gracias"
+
+
+def test_confirmar_una_sena_la_refuerza_y_borrarla_la_baja():
+    from silva import controlador as c
+    ctrl, reloj = _controlador(fines=[10, 40, 70], salidas=[("Gracias", 0.18, 0.2), ("Gracias", 0.18, 0.2),
+                                                             ("Hola", 0.9, 0.0)])
+    guardados = []
+    ctrl.al_reforzar = guardados.append
+    _avanzar(ctrl, reloj, 10)
+    ctrl.confirmar_pendiente(0)  # era «Gracias»
+    assert ctrl.refuerzos["Gracias"] == pytest.approx(c.REFUERZO_CONFIRMAR) and guardados[-1] == ctrl.refuerzos
+    r = _avanzar(ctrl, reloj, 30)[-1]  # la misma seña dudosa: con el refuerzo ahora es más probable
+    assert r.pendiente.opciones[0].confianza > 0.18
+    _avanzar(ctrl, reloj, 30)
+    ctrl.descartar_pendiente()  # «Hola» se escribió sola sin hacer la seña
+    assert ctrl.refuerzos["Hola"] == pytest.approx(c.REFUERZO_BORRAR)
+    for _ in range(20):  # tiene un tope
+        ctrl.reforzar("Gracias", c.REFUERZO_CONFIRMAR)
+    assert ctrl.refuerzos["Gracias"] == pytest.approx(c.REFUERZO_MAXIMO)
+
+
+def test_los_refuerzos_se_guardan_y_se_cargan(tmp_path):
+    from silva.controlador import cargar_refuerzos, guardar_refuerzos
+    ruta = tmp_path / "sub" / "refuerzos.json"
+    assert cargar_refuerzos(ruta) == {}
+    guardar_refuerzos(ruta, {"Por favor": -0.25, "Gracias": 0.35})
+    assert cargar_refuerzos(ruta) == {"Por favor": -0.25, "Gracias": 0.35}
+    ruta.write_text("dañado", encoding="utf-8")
+    assert cargar_refuerzos(ruta) == {}
+
+
+def test_con_margen_se_escribe_aunque_otra_cosa_sea_algo_mas_probable():
+    """Regla de la v1.5.1: basta con la mitad de la probabilidad de «otra cosa» (antes había que superarla)."""
+    ctrl, reloj = _controlador(fines=[10], salidas=[("Hola", 0.3, 0.5)])
+    ctrl.margen_otra = 0.5
+    _avanzar(ctrl, reloj, 10)
+    assert ctrl.buffer.texto == "Hola"

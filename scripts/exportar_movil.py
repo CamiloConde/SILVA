@@ -101,6 +101,8 @@ def exportar_paquete(destino: Path, origen: str) -> None:
                 "nombres": paquete_palabras.get("nombres", {}),
                 "umbral": float(metadatos_palabras.get("umbral", 0.5)),
                 "umbral_sugerencia": float(metadatos_palabras.get("umbral_sugerencia", 0.12)),
+                "margen_otra": float(metadatos_palabras.get("margen_otra", 1.0)),
+                "margen_sugerencia": float(metadatos_palabras.get("margen_sugerencia", 0.5)),
             },
         }
         (carpeta / "modelos.json").write_text(json.dumps(indice, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -150,6 +152,8 @@ def main() -> None:
             "nombres": paquete_palabras.get("nombres", {}),
             "umbral": float(metadatos_palabras.get("umbral", 0.5)),
             "umbral_sugerencia": float(metadatos_palabras.get("umbral_sugerencia", 0.12)),
+            "margen_otra": float(metadatos_palabras.get("margen_otra", 1.0)),
+            "margen_sugerencia": float(metadatos_palabras.get("margen_sugerencia", 0.5)),
         },
         "animaciones": nombres_anim,
         "guias_letras": {"letras": [str(l) for l in guias["letras"]], "trazo": [bool(t) for t in guias["trazo"]]},

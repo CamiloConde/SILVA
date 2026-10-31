@@ -6,7 +6,7 @@ package co.edu.utb.silva.nucleo
  */
 object Config {
     // Deletreo
-    const val UMBRAL_CONFIANZA = 0.60  // con 0,80 muchas letras de manos nuevas no llegaban a escribirse
+    const val UMBRAL_CONFIANZA = 0.50  // con 0,60 muchas letras bien hechas no llegaban a escribirse (silva.config)
     const val CUADROS_ESTABLES = 5
     const val CONFIANZA_DETECCION = 0.6f
     const val CONFIANZA_SEGUIMIENTO = 0.4f  // con 0,6 una mano rápida se perdía a mitad del trazo
@@ -18,7 +18,7 @@ object Config {
     const val MIN_CUADROS_MOVIMIENTO = 6
     const val SEGUNDOS_SIN_MANO_TRAZO = 0.3  // una mano rápida sale borrosa y se pierde un instante
     const val MAX_CUADROS_MOVIMIENTO = 75
-    const val UMBRAL_MOVIMIENTO = 0.4
+    const val UMBRAL_MOVIMIENTO = 0.35  // con 0,4 costaban la Z, la H, la J y la Ñ (silva.config)
     const val RECORRIDO_MINIMO = 0.4
     const val SEGUNDOS_INICIO_TRAZO = 0.6
 
@@ -32,7 +32,13 @@ object Config {
     const val MOVIMIENTO_ACTIVO = 0.12
     const val CONFIANZA_MANOS_PALABRAS = 0.4f
     const val SEGUNDOS_CORRECCION = 8.0
-    const val SEGUNDOS_SUGERENCIA = 10.0
+    const val SEGUNDOS_SUGERENCIA = 15.0
+    // Refuerzo por persona (silva.controlador): confirmar una seña la hace más fácil de reconocer en este teléfono
+    const val REFUERZO_CONFIRMAR = 0.35
+    const val REFUERZO_ACERTADA = 0.15
+    const val REFUERZO_BORRAR = -0.25
+    const val REFUERZO_MAXIMO = 1.1
+    const val REFUERZO_MINIMO = -0.7
     const val CUADROS_REPETICION = 20
 
     // El segmentador de Palabras mide en segundos (silva.palabras): los valores en cuadros de arriba se

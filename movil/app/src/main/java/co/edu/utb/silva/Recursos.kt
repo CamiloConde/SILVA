@@ -60,7 +60,8 @@ class Modelos(
                 ClasificadorMovimiento(Bosque(modelo("letras_movimiento.bin")),
                     indice.getJSONObject("letras_movimiento").getJSONArray("clases").textos()),
                 ClasificadorPalabras(Bosque(modelo("palabras.bin")), p.getJSONArray("clases").textos(),
-                    n.keys().asSequence().associateWith { n.getString(it) }, p.getDouble("umbral"), p.getDouble("umbral_sugerencia")),
+                    n.keys().asSequence().associateWith { n.getString(it) }, p.getDouble("umbral"), p.getDouble("umbral_sugerencia"),
+                    p.optDouble("margen_otra", 1.0), p.optDouble("margen_sugerencia", 0.5)),
                 Animaciones(leer("animaciones.bin"), original.getJSONArray("animaciones").textos()),
                 Sugerencias(String(leer("palabras_es.txt"), Charsets.UTF_8).lines()),
                 original.optJSONObject("guias_letras")?.let { g ->

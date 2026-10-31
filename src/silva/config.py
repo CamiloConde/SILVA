@@ -43,6 +43,7 @@ RUTA_GUIAS_LETRAS = DIR_MODELOS / "animaciones_letras.npz"  # cómo se hace cada
 DIR_LANDMARKS = (DIR_RECURSOS if EMPAQUETADO else RAIZ_PROYECTO) / "data" / "landmarks"  # el ejecutable los trae para entrenar
 DIR_INFORMES = DIR_DATOS_USUARIO / "informes" if EMPAQUETADO else RAIZ_PROYECTO / "docs"  # métricas de cada entrenamiento
 RUTA_HISTORIAL = DIR_DATOS_USUARIO / "historial.db"
+RUTA_REFUERZOS = DIR_DATOS_USUARIO / "refuerzos_palabras.json"  # señas confirmadas en este equipo (controlador)
 
 # Formato de los landmarks
 NUM_LANDMARKS = 21
@@ -80,9 +81,11 @@ ENCUADRE_HOMBROS_Y_MAX = 0.70  # hombros más abajo: la persona queda baja en la
 
 # Regla de confirmación (RF-04, Figura 4 del modelado UML). Con personas no vistas (LSC70, validación
 # cruzada por persona): con 0,80 se escribían el 70 % de las señas (98,5 % de acierto) y con 0,60 el 85 %
-# (96,1 % de acierto): con 0,80 muchas letras de manos nuevas no llegaban a escribirse. Además la letra
-# debe sostenerse CUADROS_ESTABLES cuadros seguidos.
-UMBRAL_CONFIANZA = 0.60
+# (96,1 % de acierto): con 0,80 muchas letras de manos nuevas no llegaban a escribirse. En la prueba con
+# usuarios del 31/10/2026, con otras cámaras y equipos, aun con 0,60 muchas letras bien hechas se quedaban sin
+# escribir: se baja a 0,50 (el error se corrige con Retroceso). Además la letra debe sostenerse
+# CUADROS_ESTABLES cuadros seguidos.
+UMBRAL_CONFIANZA = 0.50
 CUADROS_ESTABLES = 5
 
 # Letras que se reconocen cuadro a cuadro (modelo de letras estáticas). M, N y P se agregaron en la
@@ -99,7 +102,10 @@ CUADROS_QUIETO = 4
 MIN_CUADROS_MOVIMIENTO = 6  # trazos más cortos (~0,2 s) se ignoran
 SEGUNDOS_SIN_MANO_TRAZO = 0.3  # una mano rápida sale borrosa y se pierde un instante: el trazo sigue
 MAX_CUADROS_MOVIMIENTO = 75  # ~2,5 s: un trazo más largo se corta y se clasifica
-UMBRAL_MOVIMIENTO = 0.4  # probabilidad mínima para escribir una letra con movimiento
+# probabilidad mínima para escribir una letra con movimiento: con 0,4 se escribía el 58 % de los trazos (96 % de
+# acierto) y a las personas les costaba la Z, la H, la J y la Ñ; con 0,35, ~65 % (~95 %) y algo más de letras
+# falsas al pasar de una letra a otra (docs/metricas_letras_movimiento.md)
+UMBRAL_MOVIMIENTO = 0.35
 # Recorrido mínimo de la muñeca durante el trazo, en tamaños de mano. En LSC70 el 90 % de las letras con
 # movimiento recorre más de 0,46 (la Q y la G, las que menos); las estáticas, 0,1-0,35 (mediana). Pasar de
 # una letra estática a otra cambia la forma de la mano pero casi no la desplaza.
