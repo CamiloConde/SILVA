@@ -201,3 +201,14 @@ La interfaz pasó de Tkinter a PySide6 y el procesamiento de video a un hilo apa
 | PR-98 | Configuración | Mano rápida | MediaPipe la pierde menos | Seguimiento 0,6 → 0,4 en Deletreo; se piden 30 cuadros/s a la cámara (PC y teléfono) para que no baje a 15 con poca luz y la mano no salga borrosa | Parcial (falta medir con cámara real) |
 | PR-99 | Datos (`generar_animaciones.py`) | Guías de las letras con trazo | Movimiento claro y fluido | Se elige un recorrido amplio con la mano de tamaño parejo; se suaviza el temblor; la Z se dibuja con su forma (LSC70 no muestra sus esquinas); interpolación Catmull-Rom; todas las guías en vista de espejo, como la cámara de la app (la J y la Z se veían al revés) | Aprobada |
 | PR-100 | Funcional (manual) | Repetir la prueba con usuarios en el PC y en el teléfono | «Por favor» no aparece sola; Z, H, J y Ñ se escriben | | Pendiente |
+
+## Versión 1.5.1: rendimiento y umbrales (prueba en otros equipos, 31/10/2026)
+
+| ID | Tipo | Escenario | Resultado esperado | Resultado obtenido | Estado |
+|---|---|---|---|---|---|
+| PR-101 | Precisión (`entrenar_palabras.py`) | Señas reales que la app escribe sola (personas no vistas) | Más palabras escritas sin perder el reposo | La regla exigía superar a «otra cosa» y el umbral no influía: 50 % escritas. Con la mitad de «otra cosa» basta: 63 % escritas (93,7 % de acierto), 13 % sugeridas (correcta entre las 3: 92 %); ante el reposo 0,1 %; palabras falsas ante movimientos ajenos 14,9 % (antes 3,5 %) | Aprobada |
+| PR-102 | Unitaria (`test_palabras.py`) | Aparece una mano mientras se muestra «¿Quisiste decir?» | La sugerencia sigue hasta elegir, borrar, vencer (15 s) o llegar otra palabra | Correcto (antes se cerraba al empezar cualquier movimiento: en el celular, al acercar la mano para tocar) | Aprobada |
+| PR-103 | Unitaria (`test_palabras.py`) | Confirmar una sugerencia, corregir, aceptar o borrar una palabra | La seña confirmada se reconoce más fácil en ese equipo; la borrada, menos; con tope; se guarda | Correcto (×1,4 por confirmación hasta ×3; borrar ×0,8 hasta ×0,5; `refuerzos_palabras.json` en el PC, preferencias en el teléfono) | Aprobada |
+| PR-104 | Configuración | Letras quietas y con trazo | Escribir más letras bien hechas | Umbral de letras 0,60 → 0,50; letras con trazo 0,40 → 0,35 | Parcial (falta medir con personas) |
+| PR-105 | Funcional (cámara real) | Leer la cámara mientras se procesa un cuadro lento (60 ms) | Se procesa siempre el cuadro más reciente | La cámara se lee en un hilo aparte y solo se guarda el último cuadro (antes se acumulaban cuadros viejos: retraso) | Aprobada |
+| PR-106 | Configuración | Equipo lento en Palabras (más de 45 ms por cuadro en el PC, 70 ms en el teléfono) | Más cuadros por segundo | Modo liviano automático: la pose cada 2 cuadros y la búsqueda de la mano perdida cada 3; se avisa junto a los cuadros/s | Parcial (falta medir en un equipo lento) |
