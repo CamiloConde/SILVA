@@ -112,8 +112,14 @@ class Detectores(private val context: Context, private val config: Aceleracion =
     // 0 ya lo usó la prueba de la GPU con la imagen vacía: MediaPipe exige marcas de tiempo crecientes
     private var ultimoLetras = 0L
     private var ultimoPalabras = 0L
-    private var cuadroLento = false  // el cuadro anterior tardó más de 70 ms
-    private var saltarRecuperacion = false
+    // Teléfono lento (silva.cuerpo.DetectorCuerpo): con más de MS_LENTO por cuadro en promedio pasa a «liviano»;
+    // la pose se calcula un cuadro sí y otro no (hombros y codos se mueven poco; las manos se detectan en todos)
+    // y la recuperación de la mano perdida, uno de cada tres. Vuelve a lo normal por debajo de MS_NORMAL.
+    private var msPromedio = 0.0
+    @Volatile var liviano = false
+        private set
+    private var n = 0
+    private var poseAnterior: List<Punto>? = null
     private val esperaRecuperar = IntArray(2)  // cuadros que faltan para volver a buscar cada mano perdida
 
     /** Milisegundos acumulados por etapa (para el registro de rendimiento). */
@@ -154,9 +160,14 @@ class Detectores(private val context: Context, private val config: Aceleracion =
         ultimoPalabras = maxOf(ms, ultimoPalabras + 1)
         val ts = ultimoPalabras
         val mp = BitmapImageBuilder(imagen).build()
-        val rPose: com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
+        n++
+        val conPose = !liviano || n % 2 == 0 || poseAnterior == null
+        var rPose: com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult? = null
         val rManos: com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
-        if (config.paralelo) {
+        if (!conPose) {
+            rManos = manosPalabras.detectForVideo(mp, ts)
+            tiempos.manos += SystemClock.uptimeMillis() - inicio
+        } else if (config.paralelo) {
             var finPose = 0L
             val enCurso = hilos.submit(Callable { pose.detectForVideo(mp, ts).also { finPose = SystemClock.uptimeMillis() } })
             rManos = manosPalabras.detectForVideo(mp, ts)
@@ -171,12 +182,11 @@ class Detectores(private val context: Context, private val config: Aceleracion =
             tiempos.pose += finPose - inicio
             tiempos.manos += SystemClock.uptimeMillis() - finPose
         }
-        val puntosPose = rPose.landmarks().firstOrNull()?.map { Punto(it.x(), it.y()) }
+        val puntosPose = if (rPose != null) rPose.landmarks().firstOrNull()?.map { Punto(it.x(), it.y()) }.also { poseAnterior = it }
+            else poseAnterior
         val manos = rManos.landmarks().map { m -> m.map { Punto(it.x(), it.y()) } }
         var (izq, der) = asignarManos(puntosPose, manos)
-        // En un teléfono lento la recuperación de la mano perdida se hace un cuadro sí y otro no
-        saltarRecuperacion = cuadroLento && !saltarRecuperacion
-        if (puntosPose != null && !saltarRecuperacion) {
+        if (puntosPose != null && (!liviano || n % 3 == 0)) {
             val antes = SystemClock.uptimeMillis()
             val r = recuperar(imagen, puntosPose, izq, der)
             tiempos.recuperar += SystemClock.uptimeMillis() - antes
@@ -184,7 +194,9 @@ class Detectores(private val context: Context, private val config: Aceleracion =
             der = r.second
         }
         tiempos.cuadros++
-        cuadroLento = SystemClock.uptimeMillis() - inicio > 70
+        val ms = (SystemClock.uptimeMillis() - inicio).toDouble()
+        msPromedio = if (msPromedio == 0.0) ms else 0.9 * msPromedio + 0.1 * ms
+        if (msPromedio > MS_LENTO) liviano = true else if (msPromedio < MS_NORMAL) liviano = false
         return CuadroCuerpo(puntosPose, izq, der, imagen.width.toFloat() / imagen.height)
     }
 
@@ -258,3 +270,6 @@ class Detectores(private val context: Context, private val config: Aceleracion =
         hilos.shutdown()
     }
 }
+
+private const val MS_LENTO = 70.0  // ~14 cuadros/s solo en detectar
+private const val MS_NORMAL = 50.0

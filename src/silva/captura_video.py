@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
 
 import cv2
 import numpy as np
@@ -17,17 +19,29 @@ class CamaraNoDisponibleError(RuntimeError):
 
 
 class CapturaVideo:
+    """Cámara web. Un hilo lee la cámara sin parar y guarda solo el último cuadro (como CameraX en el teléfono):
+    en un equipo lento, leer y procesar en el mismo hilo hacía que la cámara acumulara cuadros viejos, y la
+    app procesaba lo que pasó hace un rato (retraso) a menos cuadros por segundo."""
+
     def __init__(self, indice: int = config.INDICE_CAMARA) -> None:
         self.indice = indice  # 0 = cámara integrada; 1, 2… = cámaras externas o el celular como cámara web
         self._resolucion = (640, 480)
         self._cap: cv2.VideoCapture | None = None
+        self._candado = threading.Lock()  # la cámara: leer y cambiar la resolución no van a la vez
+        self._nuevo = threading.Condition()
+        self._ultimo: np.ndarray | None = None
+        self._numero = 0  # cuadros leídos de la cámara
+        self._entregado = 0  # el último que se entregó
+        self._parar = threading.Event()
+        self._hilo: threading.Thread | None = None
 
     def configurar(self, ancho: int, alto: int) -> None:
         """Resolución pedida a la cámara; si ya está abierta se aplica en caliente."""
         self._resolucion = (ancho, alto)
         if self.abierta:
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, ancho)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, alto)
+            with self._candado:
+                self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, ancho)
+                self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, alto)
 
     def abrir(self) -> None:
         # En Windows DirectShow abre la cámara mucho más rápido que el backend por defecto (RF-01: < 3 s).
@@ -42,17 +56,39 @@ class CapturaVideo:
         # MediaPipe la pierde. Se piden 30; la cámara que no puede, lo ignora.
         cap.set(cv2.CAP_PROP_FPS, 30)
         self._cap = cap
+        self._parar.clear()
+        self._numero = self._entregado = 0
+        self._ultimo = None
+        self._hilo = threading.Thread(target=self._leer_siempre, name="camara", daemon=True)
+        self._hilo.start()
+
+    def _leer_siempre(self) -> None:
+        while not self._parar.is_set():
+            with self._candado:
+                cap = self._cap
+                ok, cuadro = cap.read() if cap is not None else (False, None)
+            if not ok:
+                time.sleep(0.01)
+                continue
+            with self._nuevo:
+                self._ultimo = cuadro
+                self._numero += 1
+                self._nuevo.notify_all()
 
     @property
     def abierta(self) -> bool:
         return self._cap is not None and self._cap.isOpened()
 
     def leer_cuadro(self) -> np.ndarray | None:
+        """El cuadro más reciente que todavía no se entregó (espera hasta 1 s); None si la cámara no da imagen."""
         if not self.abierta:
             return None
-        ok, cuadro = self._cap.read()
-        if not ok:
-            return None
+        with self._nuevo:
+            if not self._nuevo.wait_for(lambda: self._numero != self._entregado or self._parar.is_set(), 1.0):
+                return None
+            if self._ultimo is None or self._parar.is_set():
+                return None
+            cuadro, self._entregado = self._ultimo, self._numero
         alto, ancho = cuadro.shape[:2]
         if ancho > ANCHO_PROCESO:
             cuadro = cv2.resize(cuadro, (ANCHO_PROCESO, round(alto * ANCHO_PROCESO / ancho)),
@@ -60,9 +96,16 @@ class CapturaVideo:
         return cuadro
 
     def liberar(self) -> None:
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
+        self._parar.set()
+        with self._nuevo:
+            self._nuevo.notify_all()
+        if self._hilo is not None:
+            self._hilo.join(timeout=2.0)
+            self._hilo = None
+        with self._candado:
+            if self._cap is not None:
+                self._cap.release()
+                self._cap = None
 
 
 def camaras_disponibles() -> list[str]:

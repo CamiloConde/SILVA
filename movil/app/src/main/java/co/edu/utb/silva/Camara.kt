@@ -173,7 +173,8 @@ class Camara(
                 } ?: return
                 msMotor += SystemClock.uptimeMillis() - antes
                 modo = Modo.PALABRAS
-                entregar(Fotograma(imagen, resultado, modo, brilloCada10(imagen), medirFps(), detectores.aceleracion))
+                val aceleracion = detectores.aceleracion + if (detectores.liviano) " · liviano" else ""
+                entregar(Fotograma(imagen, resultado, modo, brilloCada10(imagen), medirFps(), aceleracion))
             }
         } catch (e: Exception) {
             android.util.Log.e("SILVA", "Error al procesar un cuadro", e)

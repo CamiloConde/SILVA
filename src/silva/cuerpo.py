@@ -8,6 +8,7 @@ describe en un sistema de referencia centrado en los hombros:
 
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,7 +120,13 @@ class DetectorCuerpo:
     - Si se pierde una mano que está en uso, se busca en un recorte ampliado alrededor de la muñeca
       que da la pose (`config.RECUPERAR_MANOS`): con la mano pequeña en la imagen o borrosa, el
       detector de palmas de MediaPipe falla mucho más que sobre la mano ampliada.
+    - En un equipo lento (más de MS_LENTO por cuadro, en promedio) pasa a «liviano»: la pose se calcula un
+      cuadro sí y otro no (hombros y codos se mueven poco entre cuadros; las manos se detectan en todos) y la
+      recuperación, uno de cada tres. Vuelve a lo normal por debajo de MS_NORMAL.
     """
+
+    MS_LENTO = 45.0  # ~22 cuadros/s solo en detectar
+    MS_NORMAL = 30.0
 
     def __init__(
         self,
@@ -153,6 +160,10 @@ class DetectorCuerpo:
         )) for _ in range(2)] if recuperar else []
         self._hilos = ThreadPoolExecutor(max_workers=2)
         self._ultimo_ms = -1
+        self._ms_promedio = 0.0
+        self.liviano = False
+        self._n = 0
+        self._pose_anterior: list[Landmark] | None = None
 
     def detectar(self, cuadro_bgr: np.ndarray, marca_tiempo_ms: int) -> CuadroCuerpo:
         marca_tiempo_ms = max(marca_tiempo_ms, self._ultimo_ms + 1)
@@ -161,15 +172,30 @@ class DetectorCuerpo:
         rgb = cv2.cvtColor(cuadro_bgr, cv2.COLOR_BGR2RGB)
         imagen = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        en_curso = self._hilos.submit(self._pose.detect_for_video, imagen, marca_tiempo_ms)
+        inicio = time.perf_counter()
+        self._n += 1
+        con_pose = not self.liviano or self._n % 2 == 0 or self._pose_anterior is None
+        en_curso = self._hilos.submit(self._pose.detect_for_video, imagen, marca_tiempo_ms) if con_pose else None
         r_manos = self._manos.detect_for_video(imagen, marca_tiempo_ms)
-        r_pose = en_curso.result()
-        pose = [Landmark(p.x, p.y) for p in r_pose.pose_landmarks[0]] if r_pose.pose_landmarks else None
+        if en_curso is not None:
+            r_pose = en_curso.result()
+            pose = [Landmark(p.x, p.y) for p in r_pose.pose_landmarks[0]] if r_pose.pose_landmarks else None
+            self._pose_anterior = pose
+        else:
+            pose = self._pose_anterior
         manos = [[Landmark(p.x, p.y) for p in m] for m in r_manos.hand_landmarks]
         izquierda, derecha = asignar_manos(pose, manos)
-        if self._recuperadores and pose is not None:
+        if self._recuperadores and pose is not None and (not self.liviano or self._n % 3 == 0):
             izquierda, derecha = self._recuperar(rgb, pose, izquierda, derecha)
+        self._medir((time.perf_counter() - inicio) * 1000)
         return CuadroCuerpo(pose, izquierda, derecha, ancho / alto)
+
+    def _medir(self, ms: float) -> None:
+        self._ms_promedio = ms if self._ms_promedio == 0 else 0.9 * self._ms_promedio + 0.1 * ms
+        if self._ms_promedio > self.MS_LENTO:
+            self.liviano = True
+        elif self._ms_promedio < self.MS_NORMAL:
+            self.liviano = False
 
     def _recuperar(self, rgb: np.ndarray, pose: list[Landmark], izquierda, derecha):
         """Busca las manos perdidas que están en uso; las dos a la vez si faltan ambas."""

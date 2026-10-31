@@ -1291,7 +1291,9 @@ class VentanaPrincipal(QWidget):
     def _mostrar_info_camara(self, fps: float | None = None) -> None:
         # el nombre de la cámara ya está en la lista de al lado: aquí, solo cómo va
         if self.activo and fps is not None:
-            self.lbl_fps.setText(f"{self._ultima_resolucion} · {fps:.0f} fps")
+            # en un equipo lento la detección pasa a «liviano» (silva.cuerpo.DetectorCuerpo): se avisa aquí
+            liviano = self.ctrl.modo == MODO_PALABRAS and getattr(self.ctrl.detector_cuerpo, "liviano", False)
+            self.lbl_fps.setText(f"{self._ultima_resolucion} · {fps:.0f} fps" + (" · modo liviano" if liviano else ""))
         else:
             self.lbl_fps.setText("Cámara apagada")
 
